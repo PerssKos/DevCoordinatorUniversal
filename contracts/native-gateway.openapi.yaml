@@ -1,0 +1,3304 @@
+openapi: 3.1.0
+info:
+  title: DevCoordinator Native Gateway
+  version: 0.2.0
+  summary: User-scoped remote contract for installed DevCoordinator clients.
+  description: |
+    This contract is intentionally separate from the loopback-only coordinator
+    v1 bearer API. Implementations authenticate a person and device, authorize
+    every immutable resource, and delegate host mutations to the canonical
+    DevCoordinator authority.
+
+    The base inventory, event, log, port, resource-action, lifecycle, and
+    operation paths are required by a complete v2 gateway. Paths marked with
+    `x-devcoordinator-capability` are optional capability profiles. Their
+    presence in this document defines the DTO and safety contract only; it does
+    not claim that the current server or client implements them. A client may
+    call or reveal one only when `/meta` advertises the exact capability and
+    `/session` supplies the required scope/grant. Unknown capability strings
+    must be ignored safely.
+x-implementation-status: proposed
+x-canonical-authority: DevCoordinator
+servers:
+  - url: https://{host}/api/v2
+    variables:
+      host:
+        default: console.example.invalid
+security:
+  - oauth2:
+      - inventory:read
+paths:
+  /meta:
+    get:
+      operationId: getMeta
+      security: []
+      responses:
+        '200':
+          description: Contract and client compatibility information.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayMeta'
+        default:
+          $ref: '#/components/responses/Problem'
+  /session:
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Current user, device, scopes, and grants.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: revokeCurrentSession
+      responses:
+        '204':
+          description: Device session and refresh-token family revoked.
+        default:
+          $ref: '#/components/responses/Problem'
+  /inventory:
+    get:
+      operationId: getInventory
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Authorized, immutable-identity inventory projection.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+        '304':
+          description: The client's cached revision remains current.
+        default:
+          $ref: '#/components/responses/Problem'
+  /events:
+    get:
+      operationId: getEvents
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: string
+            maxLength: 1024
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Durable events in insertion order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        default:
+          $ref: '#/components/responses/Problem'
+  /resources/{resourceId}/actions/{action}:
+    post:
+      operationId: actOnResource
+      security:
+        - oauth2:
+            - resources:act
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - name: action
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/ResourceAction'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRequest'
+      responses:
+        '202':
+          description: Action accepted by the canonical authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /resources/{resourceId}/logs:
+    get:
+      operationId: getResourceLogs
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 1024
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 200
+      responses:
+        '200':
+          description: Bounded log chunk with an opaque continuation cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogPage'
+        default:
+          $ref: '#/components/responses/Problem'
+  /ports/leases:
+    post:
+      operationId: createPortLease
+      security:
+        - oauth2:
+            - ports:manage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeaseRequest'
+      responses:
+        '201':
+          description: Exact lease allocated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortLease'
+        default:
+          $ref: '#/components/responses/Problem'
+  /ports/leases/{leaseId}:
+    delete:
+      operationId: releasePortLease
+      security:
+        - oauth2:
+            - ports:manage
+      parameters:
+        - name: leaseId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Exact lease released.
+        default:
+          $ref: '#/components/responses/Problem'
+  /lifecycle/plans:
+    post:
+      operationId: createLifecyclePlan
+      security:
+        - oauth2:
+            - lifecycle:manage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LifecyclePlanRequest'
+      responses:
+        '201':
+          description: Fresh plan bound to exact effects and retained data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LifecyclePlan'
+        default:
+          $ref: '#/components/responses/Problem'
+  /lifecycle/plans/{planId}/apply:
+    post:
+      operationId: applyLifecyclePlan
+      security:
+        - oauth2:
+            - lifecycle:manage
+      parameters:
+        - name: planId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 256
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - planFingerprint
+                - confirmationPhrase
+              properties:
+                planFingerprint:
+                  type: string
+                  minLength: 1
+                  maxLength: 512
+                confirmationPhrase:
+                  type: string
+                  maxLength: 512
+      responses:
+        '202':
+          description: Plan accepted; poll the returned operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /databases:
+    get:
+      operationId: getDatabases
+      x-devcoordinator-capability: databases.read
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:read
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: |
+            Authorized database identities and protection state. Failed or
+            unavailable discovery is represented as a discovery record, never
+            as a fabricated database.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseCollection'
+        '304':
+          description: The client's cached database revision remains current.
+        default:
+          $ref: '#/components/responses/Problem'
+  /databases/{databaseId}/backups:
+    get:
+      operationId: getDatabaseBackups
+      x-devcoordinator-capability: databases.read
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:read
+      parameters:
+        - $ref: '#/components/parameters/DatabaseId'
+      responses:
+        '200':
+          description: Immutable backup and verification evidence for one database.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DatabaseBackupEvidence'
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createVerifiedDatabaseBackup
+      x-devcoordinator-capability: databases.backup
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:protect
+      parameters:
+        - $ref: '#/components/parameters/DatabaseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatabaseBackupRequest'
+      responses:
+        '202':
+          description: |
+            Creation and strong scratch restore verification were accepted as
+            one server-owned operation. A successful operation must reference
+            immutable backup evidence in its target result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /databases/{databaseId}/restore-evidence:
+    get:
+      operationId: getDatabaseRestoreEvidence
+      x-devcoordinator-capability: databases.read
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:read
+      parameters:
+        - $ref: '#/components/parameters/DatabaseId'
+      responses:
+        '200':
+          description: |
+            Retained restore outcomes, including incoming verification,
+            safety-backup evidence, post-restore checks, and rollback need.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DatabaseRestoreEvidence'
+        default:
+          $ref: '#/components/responses/Problem'
+  /databases/{databaseId}/restore-plans:
+    post:
+      operationId: createDatabaseRestorePlan
+      x-devcoordinator-capability: databases.restore
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:restore
+      parameters:
+        - $ref: '#/components/parameters/DatabaseId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DatabaseRestorePlanRequest'
+      responses:
+        '201':
+          description: |
+            Fresh server-authored restore plan. The plan requires strong
+            verification of the incoming backup and a new, strongly verified
+            safety backup before target mutation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseRestorePlan'
+        default:
+          $ref: '#/components/responses/Problem'
+  /database-restore-plans/{planId}/apply:
+    post:
+      operationId: applyDatabaseRestorePlan
+      x-devcoordinator-capability: databases.restore
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - databases:restore
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanApplyRequest'
+      responses:
+        '202':
+          description: Exact reviewed restore plan accepted by the canonical authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /routes:
+    get:
+      operationId: getRoutes
+      x-devcoordinator-capability: routes.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:read
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Authorized routes with resolved state and redacted credentials.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteCollection'
+        '304':
+          description: The client's cached route revision remains current.
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createRoute
+      x-devcoordinator-capability: routes.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:manage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteCreateRequest'
+      responses:
+        '201':
+          description: Route created and resolved against current server truth.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        default:
+          $ref: '#/components/responses/Problem'
+  /routes/{routeId}:
+    patch:
+      operationId: updateRoute
+      x-devcoordinator-capability: routes.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:manage
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutePatchRequest'
+      responses:
+        '200':
+          description: Exact immutable route instance updated.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: deleteRoute
+      x-devcoordinator-capability: routes.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:manage
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Exact route instance removed; its target remains running.
+        default:
+          $ref: '#/components/responses/Problem'
+  /routes/{routeId}/upstream-credentials:
+    put:
+      operationId: setRouteUpstreamCredential
+      x-devcoordinator-capability: routes.credentials.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:credentials
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamCredentialInput'
+      responses:
+        '200':
+          description: |
+            Credential stored server-side for a login-required route; no
+            secret is returned. Public routes reject this operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamCredentialState'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: removeRouteUpstreamCredential
+      x-devcoordinator-capability: routes.credentials.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - routes:credentials
+      parameters:
+        - $ref: '#/components/parameters/RouteId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Stored upstream credential removed.
+        default:
+          $ref: '#/components/responses/Problem'
+  /access/users:
+    get:
+      operationId: getAccessUsers
+      x-devcoordinator-capability: access.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - access:manage
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: |
+            Owner-visible configured-owner and invited-user collection with
+            exact destination grants.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessView'
+        '304':
+          description: The client's cached access revision remains current.
+        default:
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: createAccessUser
+      x-devcoordinator-capability: access.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - access:manage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessUserCreateRequest'
+      responses:
+        '201':
+          description: Invited identity and its exact initial grants created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessView'
+        default:
+          $ref: '#/components/responses/Problem'
+  /access/users/{userId}:
+    patch:
+      operationId: updateAccessUserGrant
+      x-devcoordinator-capability: access.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - access:manage
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessGrantPatchRequest'
+      responses:
+        '200':
+          description: Exact resource grant changed and active authorization refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessView'
+        default:
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: deleteAccessUser
+      x-devcoordinator-capability: access.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - access:manage
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Invited user removed and live grants/sessions revoked.
+        default:
+          $ref: '#/components/responses/Problem'
+  /access/requests:
+    get:
+      operationId: getAccessRequests
+      x-devcoordinator-capability: invites.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - invites:manage
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccessRequestFilter'
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            maxLength: 1024
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        '200':
+          description: |
+            Pending requests first, with server-derived immutable destinations.
+            Request creation remains on the protected-host denial flow and is
+            not exposed as a forgeable installed-client mutation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestPage'
+        default:
+          $ref: '#/components/responses/Problem'
+  /access/requests/{requestId}/decision:
+    post:
+      operationId: decideAccessRequest
+      x-devcoordinator-capability: invites.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - invites:manage
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: Exact current request approved or denied atomically.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessRequestDecisionResult'
+        default:
+          $ref: '#/components/responses/Problem'
+  /telegram:
+    get:
+      operationId: getTelegramView
+      x-devcoordinator-capability: telegram.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - telegram:manage
+      responses:
+        '200':
+          description: Caller-owned bots, or all bots for a configured owner, with redacted token state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramView'
+        default:
+          $ref: '#/components/responses/Problem'
+  /telegram/bots:
+    post:
+      operationId: createTelegramBot
+      x-devcoordinator-capability: telegram.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - telegram:manage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramBotCreateRequest'
+      responses:
+        '201':
+          description: Bot identity validated; token retained only by the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramView'
+        default:
+          $ref: '#/components/responses/Problem'
+  /telegram/bots/{botId}:
+    delete:
+      operationId: deleteTelegramBot
+      x-devcoordinator-capability: telegram.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - telegram:manage
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '204':
+          description: Bot, assignments, authorization queue, and pending delivery state removed.
+        default:
+          $ref: '#/components/responses/Problem'
+  /telegram/bots/{botId}/projects:
+    patch:
+      operationId: setTelegramBotProjects
+      x-devcoordinator-capability: telegram.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - telegram:manage
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramProjectAssignmentRequest'
+      responses:
+        '200':
+          description: Exact current project identities assigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramView'
+        default:
+          $ref: '#/components/responses/Problem'
+  /telegram/bots/{botId}/authorizations/{authorizationId}/decision:
+    post:
+      operationId: decideTelegramAuthorization
+      x-devcoordinator-capability: telegram.manage
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - telegram:manage
+      parameters:
+        - $ref: '#/components/parameters/BotId'
+        - $ref: '#/components/parameters/AuthorizationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+      responses:
+        '200':
+          description: |
+            Private-chat subscriber approved or denied for this exact bot only.
+            Approval begins at the durable current event cursor and never
+            delivers historical backlog.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelegramView'
+        default:
+          $ref: '#/components/responses/Problem'
+  /unassigned-resources:
+    get:
+      operationId: getUnassignedResources
+      x-devcoordinator-capability: unassigned.read
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - unassigned:read
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: |
+            Physical resources whose repository ownership is unavailable or
+            conflicting, with source evidence and server-advertised actions.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnassignedResourceCollection'
+        '304':
+          description: The client's cached unassigned revision remains current.
+        default:
+          $ref: '#/components/responses/Problem'
+  /unassigned-resources/{resourceId}/attach:
+    post:
+      operationId: attachUnassignedResource
+      x-devcoordinator-capability: unassigned.attach
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - unassigned:manage
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnassignedAttachRequest'
+      responses:
+        '202':
+          description: Exact immutable resource attachment accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /unassigned-resources/{resourceId}/retirement-plans:
+    post:
+      operationId: createUnassignedRetirementPlan
+      x-devcoordinator-capability: unassigned.retire
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - unassigned:manage
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnassignedRetirementPlanRequest'
+      responses:
+        '201':
+          description: |
+            Fresh stop, fence, verify, and retain-data plan for one proved
+            standalone resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnassignedRetirementPlan'
+        default:
+          $ref: '#/components/responses/Problem'
+  /unassigned-retirement-plans/{planId}/apply:
+    post:
+      operationId: applyUnassignedRetirementPlan
+      x-devcoordinator-capability: unassigned.retire
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - unassigned:manage
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanApplyRequest'
+      responses:
+        '202':
+          description: Exact reviewed standalone-retirement plan accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /bulk-operation-plans:
+    post:
+      operationId: createBulkOperationPlan
+      x-devcoordinator-capability: bulk.stop
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - bulk:act
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkOperationPlanRequest'
+      responses:
+        '201':
+          description: Fresh per-target stop plan for explicit checked resources.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkOperationPlan'
+        default:
+          $ref: '#/components/responses/Problem'
+  /bulk-operation-plans/{planId}/apply:
+    post:
+      operationId: applyBulkOperationPlan
+      x-devcoordinator-capability: bulk.stop
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - bulk:act
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanApplyRequest'
+      responses:
+        '202':
+          description: Reviewed plan accepted; operation retains every per-target result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+  /performance/history:
+    get:
+      operationId: getPerformanceHistory
+      x-devcoordinator-capability: performance.read
+      x-implementation-status: deferred
+      security:
+        - oauth2:
+            - performance:read
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 400
+            default: 120
+      responses:
+        '200':
+          description: |
+            Bounded host and entity samples. Sampler errors and stale/reset
+            history are explicit; the gateway never derives absent samples.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceHistory'
+        default:
+          $ref: '#/components/responses/Problem'
+  /operations/{operationId}:
+    get:
+      operationId: getOperation
+      parameters:
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Durable operation result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        default:
+          $ref: '#/components/responses/Problem'
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        Authorization Code flow must require PKCE S256 for installed clients.
+        Access tokens are short-lived; refresh tokens rotate and are bound to a
+        revocable device session.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://console.example.invalid/oauth/authorize
+          tokenUrl: https://console.example.invalid/oauth/token
+          refreshUrl: https://console.example.invalid/oauth/token
+          scopes:
+            inventory:read: Read authorized inventory and events.
+            resources:act: Start, stop, or restart authorized resources.
+            ports:manage: Create and release authorized project leases.
+            lifecycle:manage: Plan and apply archive, restore, and purge.
+            databases:read: Read authorized database and backup evidence.
+            databases:protect: Create and strongly verify database backups.
+            databases:restore: Plan and apply safety-backed database restores.
+            routes:read: Read authorized route state.
+            routes:manage: Create, update, and remove authorized routes.
+            routes:credentials: Store or remove redacted upstream credentials.
+            access:manage: Administer exact users and destination grants.
+            invites:manage: Read and decide exact server-derived access requests.
+            telegram:manage: Administer caller-owned or owner-visible Telegram bots.
+            unassigned:read: Read authorized unassigned-resource evidence.
+            unassigned:manage: Attach or retire exact unassigned resources.
+            bulk:act: Plan and apply bounded explicit bulk stops.
+            performance:read: Read authorized host and resource samples.
+  headers:
+    ETag:
+      description: Strong opaque revision identifier.
+      schema:
+        type: string
+  parameters:
+    ResourceId:
+      name: resourceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    DatabaseId:
+      name: databaseId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    RouteId:
+      name: routeId
+      in: path
+      required: true
+      description: Immutable route-instance identity, never a reusable slug.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: Opaque invited-user identity; email is presentation only.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    BotId:
+      name: botId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    AuthorizationId:
+      name: authorizationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    PlanId:
+      name: planId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    GatewayMeta:
+      type: object
+      additionalProperties: false
+      required:
+        - contractVersion
+        - serverVersion
+        - minimumClientVersion
+        - capabilities
+      properties:
+        contractVersion:
+          type: string
+          const: '2.0'
+        serverVersion:
+          type: string
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+        minimumClientVersion:
+          type: string
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+        capabilities:
+          type: array
+          uniqueItems: true
+          description: |
+            Implemented server capability identifiers. The values below are
+            the known v2 profiles; future dot-delimited values are allowed and
+            must be ignored safely by clients that do not recognize them.
+          items:
+            type: string
+            pattern: '^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$'
+          x-known-values:
+            - inventory.read
+            - events.read
+            - resources.act
+            - logs.read
+            - ports.manage
+            - lifecycle.manage
+            - databases.read
+            - databases.backup
+            - databases.restore
+            - routes.manage
+            - routes.credentials.manage
+            - access.manage
+            - invites.manage
+            - telegram.manage
+            - unassigned.read
+            - unassigned.attach
+            - unassigned.retire
+            - bulk.stop
+            - performance.read
+    Session:
+      type: object
+      additionalProperties: false
+      required:
+        - userId
+        - email
+        - deviceSessionId
+        - roles
+        - scopes
+        - grants
+        - expiresAt
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type:
+            - string
+            - 'null'
+        deviceSessionId:
+          type: string
+        roles:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/SessionRole'
+        scopes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        grants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Grant'
+        expiresAt:
+          type: string
+          format: date-time
+    SessionRole:
+      type: string
+      enum:
+        - configured_owner
+        - invited_operator
+    Grant:
+      type: object
+      additionalProperties: false
+      required:
+        - resourceId
+        - permissions
+      properties:
+        resourceId:
+          type: string
+        permissions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    Inventory:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - observedAt
+        - partial
+        - projects
+        - resources
+        - leases
+        - blockers
+      properties:
+        revision:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+        partial:
+          type: boolean
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Resource'
+        leases:
+          type: array
+          items:
+            $ref: '#/components/schemas/PortLease'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    Project:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - displayName
+        - state
+        - allowedActions
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        state:
+          $ref: '#/components/schemas/ResourceState'
+        allowedActions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceAction'
+    Resource:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - kind
+        - displayName
+        - state
+        - allowedActions
+        - blockers
+      properties:
+        id:
+          type: string
+        projectId:
+          type:
+            - string
+            - 'null'
+        kind:
+          type: string
+          enum:
+            - server
+            - container
+            - database
+            - worktree
+        displayName:
+          type: string
+        state:
+          $ref: '#/components/schemas/ResourceState'
+        port:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 65535
+        cpuPercent:
+          type:
+            - number
+            - 'null'
+          minimum: 0
+        memoryBytes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        allowedActions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceAction'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    ResourceState:
+      type: string
+      enum:
+        - running
+        - stopped
+        - starting
+        - stopping
+        - unhealthy
+        - archived
+        - unknown
+    ResourceAction:
+      type: string
+      enum:
+        - start
+        - stop
+        - restart
+    Blocker:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        recovery:
+          type:
+            - string
+            - 'null'
+    ActionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+          maxLength: 300
+    LeaseRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - purpose
+      properties:
+        projectId:
+          type: string
+        purpose:
+          type: string
+          minLength: 1
+          maxLength: 120
+        preferredPort:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 65535
+        ttlSeconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+    PortLease:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - port
+        - purpose
+        - expiresAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        purpose:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    LifecyclePlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - targetKind
+        - targetId
+        - action
+        - reason
+      properties:
+        targetKind:
+          type: string
+          enum:
+            - project
+            - server
+            - container
+            - worktree
+        targetId:
+          type: string
+        action:
+          type: string
+          enum:
+            - archive
+            - purge
+            - restore
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+    LifecyclePlan:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - fingerprint
+        - targetId
+        - action
+        - effects
+        - retained
+        - deleted
+        - blockers
+        - confirmationPhrase
+        - expiresAt
+      properties:
+        id:
+          type: string
+        fingerprint:
+          type: string
+        targetId:
+          type: string
+        action:
+          type: string
+          enum:
+            - archive
+            - purge
+            - restore
+        effects:
+          type: array
+          items:
+            type: string
+        retained:
+          type: array
+          items:
+            type: string
+        deleted:
+          type: array
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        confirmationPhrase:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    Operation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - partial
+        - needsAttention
+        - startedAt
+        - results
+        - errors
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - succeeded
+            - failed
+            - timed_out
+            - cancelled
+            - partial
+            - needs_attention
+        partial:
+          type: boolean
+        needsAttention:
+          type: boolean
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        resultRevision:
+          type:
+            - string
+            - 'null'
+          description: Fresh inventory revision produced after a completed mutation.
+        results:
+          type: array
+          description: |
+            Retained per-target outcomes. A client treats the operation as
+            successful only when status is succeeded, both failure flags are
+            false, and every result is succeeded.
+          items:
+            $ref: '#/components/schemas/OperationTargetResult'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Problem'
+    OperationTargetResult:
+      type: object
+      additionalProperties: false
+      required:
+        - targetId
+        - targetKind
+        - status
+        - message
+        - evidenceIds
+      properties:
+        targetId:
+          type: string
+        targetKind:
+          type: string
+          enum:
+            - project
+            - server
+            - container
+            - database
+            - route
+            - port_lease
+            - worktree
+            - unassigned_resource
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - succeeded
+            - failed
+            - timed_out
+            - cancelled
+            - blocked
+        message:
+          type: string
+        evidenceIds:
+          type: array
+          description: Opaque references retrievable through the owning capability.
+          items:
+            type: string
+    EventPage:
+      type: object
+      additionalProperties: false
+      required:
+        - events
+        - nextCursor
+        - hasMore
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+        hasMore:
+          type: boolean
+    Event:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - code
+        - message
+        - occurredAt
+      properties:
+        id:
+          type: string
+        projectId:
+          type:
+            - string
+            - 'null'
+        resourceId:
+          type:
+            - string
+            - 'null'
+        kind:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+    LogPage:
+      type: object
+      additionalProperties: false
+      required:
+        - lines
+        - nextCursor
+        - truncated
+      properties:
+        lines:
+          type: array
+          items:
+            type: string
+        nextCursor:
+          type:
+            - string
+            - 'null'
+        truncated:
+          type: boolean
+    DatabaseCollection:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - observedAt
+        - partial
+        - databases
+        - discoveryIssues
+        - blockers
+      properties:
+        revision:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+        partial:
+          type: boolean
+        databases:
+          type: array
+          items:
+            $ref: '#/components/schemas/Database'
+        discoveryIssues:
+          type: array
+          description: |
+            Containers whose databases could not be authoritatively discovered.
+            These records must not be rendered as factual database rows.
+          items:
+            $ref: '#/components/schemas/DatabaseDiscoveryIssue'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    Database:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - containerResourceId
+        - name
+        - sizeBytes
+        - discoveredAt
+        - protection
+        - allowedActions
+        - blockers
+      properties:
+        id:
+          type: string
+        projectId:
+          type:
+            - string
+            - 'null'
+        containerResourceId:
+          type: string
+        name:
+          type: string
+        sizeBytes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+        discoveredAt:
+          type: string
+          format: date-time
+        protection:
+          $ref: '#/components/schemas/DatabaseProtectionState'
+        allowedActions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - backup
+              - restore
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    DatabaseDiscoveryIssue:
+      type: object
+      additionalProperties: false
+      required:
+        - containerResourceId
+        - code
+        - message
+        - observedAt
+      properties:
+        containerResourceId:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+    DatabaseProtectionState:
+      type: object
+      additionalProperties: false
+      required:
+        - latestBackupId
+        - status
+      properties:
+        latestBackupId:
+          type:
+            - string
+            - 'null'
+        status:
+          type: string
+          enum:
+            - unprotected
+            - checksum_verified
+            - restore_tested
+            - verification_failed
+            - stale
+            - unavailable
+    DatabaseBackupEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - databaseId
+        - destinationLabel
+        - createdAt
+        - byteSize
+        - sha256
+        - sourceContainerFingerprint
+        - sourceImage
+        - postgresVersion
+        - catalogFingerprint
+        - format
+        - verification
+      properties:
+        id:
+          type: string
+        databaseId:
+          type: string
+        destinationLabel:
+          type: string
+          description: Server-approved presentation label, not an editable host path.
+        createdAt:
+          type: string
+          format: date-time
+        byteSize:
+          type: integer
+          minimum: 0
+        sha256:
+          type: string
+          pattern: '^sha256:[0-9a-f]{64}$'
+        sourceContainerFingerprint:
+          type: string
+        sourceImage:
+          type: string
+        postgresVersion:
+          type: string
+        catalogFingerprint:
+          type: string
+        format:
+          type: string
+          enum:
+            - custom
+            - plain
+        verification:
+          $ref: '#/components/schemas/DatabaseVerificationEvidence'
+    DatabaseVerificationEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - checksumVerifiedAt
+        - restoreTestedAt
+        - catalogMatched
+        - cleanupSucceeded
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - checksum_verified
+            - restore_tested
+            - failed
+        checksumVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        restoreTestedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        catalogMatched:
+          type:
+            - boolean
+            - 'null'
+        cleanupSucceeded:
+          type:
+            - boolean
+            - 'null'
+    DatabaseRestoreEvidence:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - databaseId
+        - operationId
+        - incomingBackupEvidenceId
+        - safetyBackupEvidenceId
+        - incomingVerification
+        - safetyVerification
+        - targetIdentityReverified
+        - transactional
+        - restoredCatalogMatched
+        - rollbackRequired
+        - status
+        - startedAt
+        - finishedAt
+        - message
+      properties:
+        id:
+          type: string
+        databaseId:
+          type: string
+        operationId:
+          type: string
+          format: uuid
+        incomingBackupEvidenceId:
+          type: string
+        safetyBackupEvidenceId:
+          type:
+            - string
+            - 'null'
+        incomingVerification:
+          $ref: '#/components/schemas/DatabaseVerificationEvidence'
+        safetyVerification:
+          oneOf:
+            - $ref: '#/components/schemas/DatabaseVerificationEvidence'
+            - type: 'null'
+        targetIdentityReverified:
+          type: boolean
+        transactional:
+          type: boolean
+        restoredCatalogMatched:
+          type:
+            - boolean
+            - 'null'
+        rollbackRequired:
+          type: boolean
+        status:
+          type: string
+          enum:
+            - running
+            - succeeded
+            - failed
+            - rollback_needed
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        message:
+          type: string
+    DatabaseBackupRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - destinationId
+        - reason
+        - verificationMode
+      properties:
+        destinationId:
+          type: string
+          description: Opaque server-configured private backup destination.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+        verificationMode:
+          type: string
+          const: strong_restore_test
+    DatabaseRestorePlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - backupEvidenceId
+        - reason
+      properties:
+        backupEvidenceId:
+          type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+    DatabaseRestorePlan:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - fingerprint
+        - databaseId
+        - backupEvidenceId
+        - compatibility
+        - incomingBackupStronglyVerified
+        - safetyBackupRequired
+        - safetyBackupStrongVerificationRequired
+        - effects
+        - blockers
+        - confirmationPhrase
+        - expiresAt
+      properties:
+        id:
+          type: string
+        fingerprint:
+          type: string
+        databaseId:
+          type: string
+        backupEvidenceId:
+          type: string
+        compatibility:
+          type: string
+          enum:
+            - compatible
+            - remap_required
+            - incompatible
+            - unknown
+        incomingBackupStronglyVerified:
+          type: boolean
+        safetyBackupRequired:
+          type: boolean
+          const: true
+        safetyBackupStrongVerificationRequired:
+          type: boolean
+          const: true
+        effects:
+          type: array
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        confirmationPhrase:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    PlanApplyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - planFingerprint
+        - confirmationPhrase
+      properties:
+        planFingerprint:
+          type: string
+          minLength: 1
+          maxLength: 512
+        confirmationPhrase:
+          type: string
+          maxLength: 512
+    RouteCollection:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - routes
+        - blockers
+      properties:
+        revision:
+          type: string
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    Route:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - slug
+        - host
+        - url
+        - title
+        - accessMode
+        - target
+        - resolved
+        - upstreamCredential
+        - allowedActions
+        - blockers
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Immutable route instance used by grants and mutations.
+        slug:
+          type: string
+        host:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type:
+            - string
+            - 'null'
+        accessMode:
+          $ref: '#/components/schemas/RouteAccessMode'
+        target:
+          $ref: '#/components/schemas/RouteTarget'
+        resolved:
+          $ref: '#/components/schemas/RouteResolution'
+        upstreamCredential:
+          $ref: '#/components/schemas/UpstreamCredentialState'
+        allowedActions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - update
+              - delete
+              - manage_credentials
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RouteAccessMode:
+      type: string
+      enum:
+        - login_required
+        - public
+    RouteTarget:
+      oneOf:
+        - $ref: '#/components/schemas/FixedPortRouteTarget'
+        - $ref: '#/components/schemas/ServerRouteTarget'
+        - $ref: '#/components/schemas/ContainerRouteTarget'
+      discriminator:
+        propertyName: kind
+        mapping:
+          fixed_port: '#/components/schemas/FixedPortRouteTarget'
+          server: '#/components/schemas/ServerRouteTarget'
+          container: '#/components/schemas/ContainerRouteTarget'
+    FixedPortRouteTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - port
+      properties:
+        kind:
+          type: string
+          const: fixed_port
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+    ServerRouteTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - projectId
+        - resourceId
+      properties:
+        kind:
+          type: string
+          const: server
+        projectId:
+          type: string
+        resourceId:
+          type: string
+    ContainerRouteTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - kind
+        - projectId
+        - resourceId
+        - containerPort
+      properties:
+        kind:
+          type: string
+          const: container
+        projectId:
+          type: string
+        resourceId:
+          type: string
+        containerPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+    RouteResolution:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - port
+        - reason
+        - observedAt
+      properties:
+        status:
+          type: string
+          enum:
+            - live
+            - down
+            - unavailable
+            - unknown
+        port:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          maximum: 65535
+        reason:
+          type:
+            - string
+            - 'null'
+        observedAt:
+          type: string
+          format: date-time
+    RouteCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - slug
+        - accessMode
+        - target
+      properties:
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$'
+        title:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+        accessMode:
+          $ref: '#/components/schemas/RouteAccessMode'
+        target:
+          $ref: '#/components/schemas/RouteTarget'
+        publicExposureAcknowledgement:
+          $ref: '#/components/schemas/PublicExposureAcknowledgement'
+      allOf:
+        - if:
+            properties:
+              accessMode:
+                const: public
+            required:
+              - accessMode
+          then:
+            required:
+              - publicExposureAcknowledgement
+    RoutePatchRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: |
+        When accessMode is public, the server requires a matching
+        publicExposureAcknowledgement for the exact derived host.
+      properties:
+        title:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+        accessMode:
+          $ref: '#/components/schemas/RouteAccessMode'
+        target:
+          $ref: '#/components/schemas/RouteTarget'
+        publicExposureAcknowledgement:
+          $ref: '#/components/schemas/PublicExposureAcknowledgement'
+      allOf:
+        - if:
+            properties:
+              accessMode:
+                const: public
+            required:
+              - accessMode
+          then:
+            required:
+              - publicExposureAcknowledgement
+    PublicExposureAcknowledgement:
+      type: object
+      additionalProperties: false
+      required:
+        - host
+        - consequence
+      properties:
+        host:
+          type: string
+        consequence:
+          type: string
+          const: anyone_on_the_internet
+    UpstreamCredentialInput:
+      oneOf:
+        - $ref: '#/components/schemas/BearerUpstreamCredentialInput'
+        - $ref: '#/components/schemas/BasicUpstreamCredentialInput'
+      discriminator:
+        propertyName: scheme
+    BearerUpstreamCredentialInput:
+      type: object
+      additionalProperties: false
+      required:
+        - scheme
+        - secret
+      properties:
+        scheme:
+          type: string
+          const: bearer
+        secret:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+    BasicUpstreamCredentialInput:
+      type: object
+      additionalProperties: false
+      required:
+        - scheme
+        - username
+        - secret
+      properties:
+        scheme:
+          type: string
+          const: basic
+        username:
+          type: string
+          minLength: 1
+          maxLength: 512
+          writeOnly: true
+        secret:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+    UpstreamCredentialState:
+      type: object
+      additionalProperties: false
+      required:
+        - configured
+        - scheme
+        - updatedAt
+      properties:
+        configured:
+          type: boolean
+        scheme:
+          type:
+            - string
+            - 'null'
+          enum:
+            - bearer
+            - basic
+            - null
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    AccessView:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - users
+        - resources
+        - invitedCount
+      properties:
+        revision:
+          type: string
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessUser'
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessResource'
+        invitedCount:
+          type: integer
+          minimum: 0
+    AccessUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - email
+        - role
+        - mutable
+        - grants
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/SessionRole'
+        mutable:
+          type: boolean
+          description: Configured owners are false and cannot be changed in this API.
+        grants:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+          description: Exact AccessResource ids, never hostnames alone.
+    AccessResource:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - host
+        - title
+        - public
+        - targetDescription
+      properties:
+        id:
+          type: string
+          description: Immutable destination instance; reuse of a slug yields a new id.
+        kind:
+          type: string
+          enum:
+            - console
+            - route
+        host:
+          type: string
+        title:
+          type: string
+        public:
+          type: boolean
+        targetDescription:
+          type: string
+    AccessUserCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - email
+        - grantResourceIds
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        grantResourceIds:
+          type: array
+          uniqueItems: true
+          maxItems: 500
+          items:
+            type: string
+    AccessGrantPatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - resourceId
+        - allowed
+      properties:
+        resourceId:
+          type: string
+        allowed:
+          type: boolean
+    AccessRequestFilter:
+      type: string
+      default: pending
+      enum:
+        - pending
+        - approved
+        - denied
+        - stale
+        - all
+    AccessRequestPage:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - pendingCount
+        - requests
+        - nextCursor
+        - hasMore
+      properties:
+        revision:
+          type: string
+        pendingCount:
+          type: integer
+          minimum: 0
+        requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessRequest'
+        nextCursor:
+          type:
+            - string
+            - 'null'
+        hasMore:
+          type: boolean
+    AccessRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - requesterEmail
+        - resource
+        - status
+        - requestedAt
+        - decidedAt
+        - decidedBy
+      properties:
+        id:
+          type: string
+        requesterEmail:
+          type: string
+          format: email
+          description: Derived from the server-verified OIDC identity.
+        resource:
+          $ref: '#/components/schemas/AccessResource'
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - denied
+            - stale
+        requestedAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        decidedBy:
+          type:
+            - string
+            - 'null'
+    DecisionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum:
+            - approve
+            - deny
+    AccessRequestDecisionResult:
+      type: object
+      additionalProperties: false
+      required:
+        - request
+        - pendingCount
+        - access
+      properties:
+        request:
+          $ref: '#/components/schemas/AccessRequest'
+        pendingCount:
+          type: integer
+          minimum: 0
+        access:
+          oneOf:
+            - $ref: '#/components/schemas/AccessView'
+            - type: 'null'
+    TelegramView:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - bots
+        - projects
+      properties:
+        revision:
+          type: string
+        bots:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelegramBot'
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelegramProject'
+    TelegramProject:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - displayName
+        - diagnosticPath
+      properties:
+        id:
+          type: string
+          description: Exact current repository identity used for assignment.
+        displayName:
+          type: string
+        diagnosticPath:
+          type:
+            - string
+            - 'null'
+          description: Authorized detail only; it is never assignment identity.
+    TelegramBot:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - telegramBotId
+        - username
+        - label
+        - ownerUserId
+        - ownerEmail
+        - status
+        - hasToken
+        - projectIds
+        - authorizations
+        - lastError
+      properties:
+        id:
+          type: string
+        telegramBotId:
+          $ref: '#/components/schemas/DecimalIdentifier'
+        username:
+          type: string
+        label:
+          type:
+            - string
+            - 'null'
+        ownerUserId:
+          type: string
+        ownerEmail:
+          type: string
+          format: email
+        status:
+          type: string
+          enum:
+            - enabled
+            - disabled
+            - polling_error
+            - delivery_error
+        hasToken:
+          type: boolean
+          description: Redacted presence only; token material is never returned.
+        projectIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        authorizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelegramAuthorization'
+        lastError:
+          type:
+            - string
+            - 'null'
+    TelegramAuthorization:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - telegramUserId
+        - chatId
+        - displayName
+        - status
+        - requestedAt
+        - decidedAt
+      properties:
+        id:
+          type: string
+        telegramUserId:
+          $ref: '#/components/schemas/DecimalIdentifier'
+        chatId:
+          $ref: '#/components/schemas/DecimalIdentifier'
+        displayName:
+          type: string
+        status:
+          type: string
+          enum:
+            - pending
+            - approved
+            - denied
+            - disabled
+        requestedAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    DecimalIdentifier:
+      type: string
+      pattern: '^-?[0-9]+$'
+      maxLength: 32
+      description: Integer-safe decimal string; never decoded through floating point.
+    TelegramBotCreateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - token
+        - takeOverWebhook
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          writeOnly: true
+        label:
+          type:
+            - string
+            - 'null'
+          maxLength: 120
+        takeOverWebhook:
+          type: boolean
+          default: false
+          description: Must be explicitly true to replace an existing webhook.
+    TelegramProjectAssignmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - projectIds
+      properties:
+        projectIds:
+          type: array
+          uniqueItems: true
+          maxItems: 500
+          items:
+            type: string
+    UnassignedResourceCollection:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+        - observedAt
+        - resources
+        - blockers
+      properties:
+        revision:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+        resources:
+          type: array
+          items:
+            $ref: '#/components/schemas/UnassignedResource'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    UnassignedResource:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - displayName
+        - state
+        - observedBy
+        - controller
+        - attribution
+        - immutableFingerprint
+        - controlBindingId
+        - ownershipFingerprint
+        - candidates
+        - allowedActions
+        - blockers
+        - observedAt
+      properties:
+        id:
+          type: string
+          description: Immutable physical host-resource identity.
+        kind:
+          type: string
+          enum:
+            - server
+            - container
+            - database
+            - worktree
+        displayName:
+          type: string
+        state:
+          $ref: '#/components/schemas/ResourceState'
+        observedBy:
+          type: string
+          description: Source that supplied observation evidence.
+        controller:
+          type:
+            - string
+            - 'null'
+          description: Proved mutation authority, or null when no safe controller exists.
+        attribution:
+          $ref: '#/components/schemas/AttributionReason'
+        immutableFingerprint:
+          type: string
+        controlBindingId:
+          type:
+            - string
+            - 'null'
+        ownershipFingerprint:
+          type:
+            - string
+            - 'null'
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepositoryCandidate'
+        allowedActions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - attach
+              - retire
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        observedAt:
+          type: string
+          format: date-time
+    AttributionReason:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - evidence
+      properties:
+        code:
+          type: string
+          enum:
+            - name_only
+            - repository_missing
+            - repository_not_git
+            - conflicting_claims
+            - ambiguous_controller
+            - stale_observation
+            - unknown
+        message:
+          type: string
+        evidence:
+          type: array
+          items:
+            type: string
+    RepositoryCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - displayName
+        - validated
+        - evidence
+      properties:
+        projectId:
+          type: string
+        displayName:
+          type: string
+        validated:
+          type: boolean
+        evidence:
+          type: array
+          items:
+            type: string
+    UnassignedAttachRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - projectId
+        - immutableFingerprint
+        - controlBindingId
+        - ownershipFingerprint
+        - reason
+      properties:
+        projectId:
+          type: string
+          description: One explicitly selected, currently validated repository.
+        immutableFingerprint:
+          type: string
+        controlBindingId:
+          type: string
+        ownershipFingerprint:
+          type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+    UnassignedRetirementPlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - immutableFingerprint
+        - controlBindingId
+        - ownershipFingerprint
+        - reason
+      properties:
+        immutableFingerprint:
+          type: string
+        controlBindingId:
+          type: string
+        ownershipFingerprint:
+          type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+    UnassignedRetirementPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - fingerprint
+        - resourceId
+        - immutableFingerprint
+        - controlBindingId
+        - ownershipFingerprint
+        - effects
+        - retained
+        - deleted
+        - blockers
+        - confirmationPhrase
+        - expiresAt
+      properties:
+        id:
+          type: string
+        fingerprint:
+          type: string
+        resourceId:
+          type: string
+        immutableFingerprint:
+          type: string
+        controlBindingId:
+          type: string
+        ownershipFingerprint:
+          type: string
+        effects:
+          type: array
+          description: Stop, automatic-start fence, and exact stopped-state verification.
+          items:
+            type: string
+        retained:
+          type: array
+          description: Files, volumes, databases, backups, and operation evidence retained.
+          items:
+            type: string
+        deleted:
+          type: array
+          maxItems: 0
+          description: Standalone retirement does not delete resource data.
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        confirmationPhrase:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    BulkOperationPlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - resourceIds
+        - reason
+      properties:
+        action:
+          type: string
+          const: stop
+        resourceIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 300
+    BulkOperationPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - fingerprint
+        - action
+        - targets
+        - blockers
+        - confirmationPhrase
+        - expiresAt
+      properties:
+        id:
+          type: string
+        fingerprint:
+          type: string
+        action:
+          type: string
+          const: stop
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/BulkOperationTarget'
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+        confirmationPhrase:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    BulkOperationTarget:
+      type: object
+      additionalProperties: false
+      required:
+        - resourceId
+        - displayName
+        - kind
+        - state
+        - effects
+        - blockers
+      properties:
+        resourceId:
+          type: string
+        displayName:
+          type: string
+        kind:
+          type: string
+          enum:
+            - server
+            - container
+        state:
+          $ref: '#/components/schemas/ResourceState'
+        effects:
+          type: array
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'
+    PerformanceHistory:
+      type: object
+      additionalProperties: false
+      required:
+        - observedAt
+        - intervalMilliseconds
+        - maxPoints
+        - sampler
+        - host
+        - series
+      properties:
+        observedAt:
+          type: string
+          format: date-time
+        intervalMilliseconds:
+          type: integer
+          minimum: 1000
+        maxPoints:
+          type: integer
+          minimum: 1
+          maximum: 400
+        sampler:
+          $ref: '#/components/schemas/PerformanceSampler'
+        host:
+          oneOf:
+            - $ref: '#/components/schemas/HostPerformanceSnapshot'
+            - type: 'null'
+        series:
+          type: array
+          items:
+            $ref: '#/components/schemas/PerformanceSeries'
+    PerformanceSampler:
+      type: object
+      additionalProperties: false
+      required:
+        - running
+        - lastSampleAt
+        - lastError
+        - historyStartedAt
+      properties:
+        running:
+          type: boolean
+        lastSampleAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        lastError:
+          type:
+            - string
+            - 'null'
+        historyStartedAt:
+          type: string
+          format: date-time
+          description: History before this process-local reset is unavailable.
+    HostPerformanceSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+        - sampledAt
+        - cpuPercent
+        - cores
+        - loadAverage
+        - uptimeSeconds
+        - memory
+        - disks
+      properties:
+        sampledAt:
+          type: string
+          format: date-time
+        cpuPercent:
+          type:
+            - number
+            - 'null'
+          minimum: 0
+        cores:
+          type: integer
+          minimum: 1
+        loadAverage:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            type: number
+            minimum: 0
+        uptimeSeconds:
+          type: integer
+          minimum: 0
+        memory:
+          $ref: '#/components/schemas/HostMemory'
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiskUsage'
+    HostMemory:
+      type: object
+      additionalProperties: false
+      required:
+        - totalBytes
+        - usedBytes
+        - availableBytes
+      properties:
+        totalBytes:
+          type: integer
+          minimum: 0
+        usedBytes:
+          type: integer
+          minimum: 0
+        availableBytes:
+          type: integer
+          minimum: 0
+    DiskUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - mountLabel
+        - totalBytes
+        - usedBytes
+        - availableBytes
+      properties:
+        mountLabel:
+          type: string
+          description: Server-redacted display label, not necessarily a host path.
+        totalBytes:
+          type: integer
+          minimum: 0
+        usedBytes:
+          type: integer
+          minimum: 0
+        availableBytes:
+          type: integer
+          minimum: 0
+    PerformanceSeries:
+      type: object
+      additionalProperties: false
+      required:
+        - key
+        - kind
+        - resourceId
+        - projectId
+        - displayName
+        - running
+        - stale
+        - points
+      properties:
+        key:
+          type: string
+        kind:
+          type: string
+          enum:
+            - host
+            - server
+            - container
+            - project
+        resourceId:
+          type:
+            - string
+            - 'null'
+        projectId:
+          type:
+            - string
+            - 'null'
+        displayName:
+          type: string
+        running:
+          type: boolean
+        stale:
+          type: boolean
+        points:
+          type: array
+          maxItems: 400
+          items:
+            $ref: '#/components/schemas/PerformancePoint'
+    PerformancePoint:
+      type: object
+      additionalProperties: false
+      required:
+        - sampledAt
+        - cpuPercent
+        - memoryBytes
+      properties:
+        sampledAt:
+          type: string
+          format: date-time
+        cpuPercent:
+          type:
+            - number
+            - 'null'
+          minimum: 0
+        memoryBytes:
+          type:
+            - integer
+            - 'null'
+          minimum: 0
+    Problem:
+      type: object
+      additionalProperties: true
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          type: string
+        requestId:
+          type: string
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Blocker'

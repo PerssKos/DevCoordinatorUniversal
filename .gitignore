@@ -1,0 +1,45 @@
+# Dart and Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+coverage/
+pubspec_overrides.yaml
+__pycache__/
+*.py[cod]
+
+# Editors
+.idea/
+*.iml
+.vscode/
+
+# Platform build state
+**/android/.gradle/
+**/android/local.properties
+**/macos/Flutter/ephemeral/
+**/windows/flutter/ephemeral/
+
+# Signing and credentials
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.crt
+*.der
+*.cer
+*.mobileprovision
+*.provisionprofile
+key.properties
+auth.json
+secrets/
+.env
+.env.*
+!.env.example
+
+# Operating systems
+.DS_Store
+Thumbs.db

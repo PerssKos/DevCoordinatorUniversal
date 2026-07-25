@@ -1,0 +1,70 @@
+name: Release readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact SemVer already present in the app pubspec
+        required: true
+        type: string
+      build_number:
+        description: Exact positive store build number already present after +
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Verify declared prerequisites (does not publish)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Refuse unsigned publication
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+          REQUESTED_BUILD_NUMBER: ${{ inputs.build_number }}
+          ANDROID_SIGNING_READY: ${{ secrets.ANDROID_SIGNING_READY }}
+          APPLE_SIGNING_READY: ${{ secrets.APPLE_SIGNING_READY }}
+          WINDOWS_SIGNING_READY: ${{ secrets.WINDOWS_SIGNING_READY }}
+        run: |
+          set -euo pipefail
+          test -n "$REQUESTED_VERSION"
+          declared_version="$(
+            awk '
+              /^version:[[:space:]]+/ {
+                value = $2
+                sub(/\+.*/, "", value)
+                print value
+              }
+            ' apps/devcoordinator/pubspec.yaml
+          )"
+          declared_build_number="$(
+            awk '
+              /^version:[[:space:]]+/ {
+                value = $2
+                sub(/^.*\+/, "", value)
+                print value
+              }
+            ' apps/devcoordinator/pubspec.yaml
+          )"
+          if [[ "$REQUESTED_VERSION" != "$declared_version" ]]; then
+            echo "Requested version $REQUESTED_VERSION does not match app version $declared_version." >&2
+            exit 1
+          fi
+          if [[ ! "$REQUESTED_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Requested build number must be a positive integer." >&2
+            exit 1
+          fi
+          if [[ "$REQUESTED_BUILD_NUMBER" != "$declared_build_number" ]]; then
+            echo "Requested build number $REQUESTED_BUILD_NUMBER does not match app build number $declared_build_number." >&2
+            exit 1
+          fi
+          test "$ANDROID_SIGNING_READY" = "true"
+          test "$APPLE_SIGNING_READY" = "true"
+          test "$WINDOWS_SIGNING_READY" = "true"
+          echo "Signing readiness is declared. This guard does not build, sign, or publish artifacts."

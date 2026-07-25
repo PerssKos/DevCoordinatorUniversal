@@ -1,0 +1,97 @@
+name: Validate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: 3.44.8
+
+jobs:
+  quality:
+    name: Format, analyze, and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.14.4'
+          cache: pip
+          cache-dependency-path: tool/requirements-openapi.txt
+      - name: Install contract validator dependencies
+        run: >-
+          python -m pip install
+          --require-hashes
+          --requirement tool/requirements-openapi.txt
+      - name: Exercise and run native gateway validator
+        run: >-
+          python tool/validate_native_gateway.py
+          --self-test
+          contracts/native-gateway.openapi.yaml
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: flutter analyze
+      - run: flutter test packages/coordinator_client
+      - run: flutter test packages/devcoordinator_design
+      - run: flutter test packages/release_update
+      - run: flutter test apps/devcoordinator
+
+  target-build:
+    name: ${{ matrix.name }} build smoke
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Android
+            os: ubuntu-24.04
+            build-arguments: apk --debug
+          - name: Android release smoke
+            os: ubuntu-24.04
+            build-arguments: apk --release
+          - name: macOS
+            os: macos-15
+            build-arguments: macos --release
+          - name: Windows
+            os: windows-2025
+            build-arguments: windows --release
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/devcoordinator
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: source
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Resolve workspace
+        working-directory: source
+        run: flutter pub get
+      - name: Build target
+        working-directory: source/apps/devcoordinator
+        run: >-
+          flutter build ${{ matrix.build-arguments }}
+          --dart-define=UPDATE_REPOSITORY=${{ github.repository }}
+      - name: Run Android release lint
+        if: matrix.name == 'Android release smoke'
+        working-directory: source/apps/devcoordinator/android
+        run: ./gradlew :app:lintRelease

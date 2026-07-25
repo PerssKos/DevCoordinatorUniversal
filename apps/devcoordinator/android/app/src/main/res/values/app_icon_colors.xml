@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_icon_background">#0B74E5</color>
+    <color name="app_launch_mark">#0B74E5</color>
+    <color name="app_launch_mark_cutout">#FFFFFF</color>
+</resources>
