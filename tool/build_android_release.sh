@@ -173,6 +173,7 @@ install -m 644 "$signed_apk" "$output_apk"
   sha256sum "$(basename "$output_apk")" \
     >"$(basename "$output_apk").sha256"
 )
+chmod 644 "$output_apk.sha256"
 private_output_directory="$workspace_app_root/build/release-private"
 symbols_archive="$release_workspace/DevCoordinator-$version_name-android-symbols.tar.gz"
 tar -czf "$symbols_archive" -C "$symbols_directory" .
