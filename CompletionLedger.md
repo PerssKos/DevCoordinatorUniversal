@@ -84,12 +84,6 @@
   stopped series, host memory/disk/load, and sampler-error states. Verify real
   sampling, ordering and aggregation, history reset, outage/stale behavior,
   bounded payloads, and screen-reader alternatives.
-- Publish the selected public repository `PerssKos/DevCoordinatorUniversal`
-  and its first stable GitHub Release, then verify anonymous latest-release
-  discovery and the in-app newer-version prompt against the published asset.
-  The v0.2.0 Android build already embeds that exact release slug; publication
-  is blocked until GitHub CLI/app access is authenticated for the `PerssKos`
-  account.
 - Select the repository and binary distribution license. Until the owner makes
   that policy decision, the repository intentionally has no `LICENSE` file and
   retains the default copyright restrictions; generated package placeholders
