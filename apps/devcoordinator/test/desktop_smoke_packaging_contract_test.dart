@@ -9,6 +9,25 @@ void main() {
       final releaseConfig = _readRepositoryFile(
         'apps/devcoordinator/macos/Runner/Configs/Release.xcconfig',
       );
+      final xcodeProject = _readRepositoryFile(
+        'apps/devcoordinator/macos/Runner.xcodeproj/project.pbxproj',
+      );
+      final workflow = _readRepositoryFile('.github/workflows/ci.yml');
+      final profileTarget = _xcodeConfigurationBlock(
+        xcodeProject,
+        id: '338D0CEA231458BD00FA5F75',
+        name: 'Profile',
+      );
+      final releaseTarget = _xcodeConfigurationBlock(
+        xcodeProject,
+        id: '33CC10FD2044A3C60003C045',
+        name: 'Release',
+      );
+      final debugTarget = _xcodeConfigurationBlock(
+        xcodeProject,
+        id: '33CC10FC2044A3C60003C045',
+        name: 'Debug',
+      );
 
       expect(
         releaseConfig,
@@ -17,6 +36,24 @@ void main() {
       expect(
         releaseConfig,
         matches(RegExp(r'^ONLY_ACTIVE_ARCH = NO$', multiLine: true)),
+      );
+      for (final target in <String>[profileTarget, releaseTarget]) {
+        expect(target, matches(RegExp(r'ARCHS = \(\s*x86_64,\s*arm64,\s*\);')));
+        expect(target, contains('ONLY_ACTIVE_ARCH = NO;'));
+      }
+      expect(debugTarget, isNot(contains('ARCHS = (')));
+      expect(debugTarget, isNot(contains('ONLY_ACTIVE_ARCH = NO;')));
+      expect(
+        workflow,
+        contains(r'''            xcode_archs: x86_64 arm64
+            xcode_only_active_arch: 'NO'
+'''),
+      );
+      expect(
+        workflow,
+        contains(r'''          FLUTTER_XCODE_ARCHS: ${{ matrix.xcode_archs }}
+          FLUTTER_XCODE_ONLY_ACTIVE_ARCH: ${{ matrix.xcode_only_active_arch }}
+'''),
       );
     },
   );
@@ -76,4 +113,18 @@ void main() {
 String _readRepositoryFile(String relativePath) {
   final candidates = <File>[File(relativePath), File('../../$relativePath')];
   return candidates.firstWhere((file) => file.existsSync()).readAsStringSync();
+}
+
+String _xcodeConfigurationBlock(
+  String project, {
+  required String id,
+  required String name,
+}) {
+  final match = RegExp(
+    '${RegExp.escape(id)} /\\* ${RegExp.escape(name)} \\*/ = '
+    '\\{(.*?)\\n\\t\\t\\};',
+    dotAll: true,
+  ).firstMatch(project);
+  expect(match, isNotNull, reason: 'Missing $name target configuration $id');
+  return match!.group(1)!;
 }

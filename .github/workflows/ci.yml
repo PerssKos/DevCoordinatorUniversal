@@ -67,6 +67,8 @@ jobs:
           - name: macOS
             os: macos-15
             build-arguments: macos --release
+            xcode_archs: x86_64 arm64
+            xcode_only_active_arch: 'NO'
             upload_smoke: true
             artifact_name: macos-adhoc-smoke
             artifact_path: source/apps/devcoordinator/build/smoke/macos/*
@@ -96,6 +98,9 @@ jobs:
         run: flutter pub get --enforce-lockfile
       - name: Build target
         working-directory: source/apps/devcoordinator
+        env:
+          FLUTTER_XCODE_ARCHS: ${{ matrix.xcode_archs }}
+          FLUTTER_XCODE_ONLY_ACTIVE_ARCH: ${{ matrix.xcode_only_active_arch }}
         run: >-
           flutter build ${{ matrix.build-arguments }}
           --dart-define=UPDATE_REPOSITORY=${{ github.repository }}
