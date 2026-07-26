@@ -26,6 +26,11 @@ still require their platform-trusted publisher identities. See
 Android key remains on an owner-controlled signer; GitHub receives only the
 already-signed APK and independently verifies its public identity. See
 [DCU-2026-07-26-09](DecisionDetails/DCU-2026-07-26-09.md).
+Universal macOS smoke packages are built on GitHub's explicit Intel runner
+with dual-architecture Xcode settings and rejected unless every Mach-O retains
+both `x86_64` and `arm64`; the hosted-runner succession must be qualified
+before GitHub's announced August 2027 Intel cutoff. See
+[DCU-2026-07-26-11](DecisionDetails/DCU-2026-07-26-11.md).
 
 Confirmed inherited direction: coordinator state and actions remain real,
 attributable, capability-gated, and fail closed; one canonical host authority
@@ -41,6 +46,29 @@ lifecycle management stays hidden, exact requested port ranges pass through,
 and lease release depends on the server's device-session ownership result. See
 [DCU-2026-07-26-06](DecisionDetails/DCU-2026-07-26-06.md) and
 [DCU-2026-07-26-07](DecisionDetails/DCU-2026-07-26-07.md).
+
+## DCU-2026-07-26-11 — Universal macOS builds use an explicit Intel host
+
+ID: DCU-2026-07-26-11 · Details:
+[supporting record](DecisionDetails/DCU-2026-07-26-11.md)
+
+Decision: Build the macOS release smoke target on GitHub's
+`macos-15-intel` runner while retaining explicit `x86_64 arm64`
+Release/Profile target settings and CI command-line overrides. Reject the
+package unless the main executable and every embedded Mach-O contain both
+architectures after archive extraction. Qualify a replacement build host or
+toolchain before GitHub's announced August 2027 hosted-Intel cutoff.
+
+Why: GitHub's unqualified `macos-15` label now selects ARM64, and three
+measured Flutter 3.44.8 runs produced a thin ARM64 main executable there,
+including runs with project-level and then target/command-level dual-arch
+settings. Trusting configuration without inspecting output, shipping separate
+architecture packages, and manually merging independently built app bundles
+were rejected: they respectively repeat the defect, weaken the requested
+universal installation journey, or risk mismatched native assets, frameworks,
+metadata, and signatures. The explicit Intel host preserves Xcode
+cross-compilation while the fail-closed bundle verifier remains the final
+proof.
 
 ## DCU-2026-07-26-10 — Update discovery selects a compatible release target
 

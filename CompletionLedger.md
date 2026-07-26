@@ -96,6 +96,13 @@
   install-over/rollback behavior; separately configure Play App Signing, Apple
   Developer ID or Mac App Store signing plus notarization, and Windows trusted
   MSIX/Store signing.
+- macOS universal-build host succession — GitHub currently supplies the
+  standard `macos-15-intel` runner used to build and `lipo`-verify the
+  `x86_64`/`arm64` smoke bundle, but GitHub has announced that hosted Intel
+  macOS support ends after August 2027. Before that cutoff, qualify a
+  successor runner or a Flutter/Xcode toolchain whose ARM host is empirically
+  proven to produce the same fully universal bundle; retain the current
+  per-Mach-O architecture and re-extraction gates during migration.
 - Packaged target acceptance — The production-signed Android APK is built, but
   still requires a physical owner sign-in/deep-link/inventory/action/refresh/
   revocation/offline/upgrade/rollback journey. Build and run trusted signed

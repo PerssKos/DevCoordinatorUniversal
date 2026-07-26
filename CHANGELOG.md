@@ -28,8 +28,9 @@ Versioning.
   events or cursor; the retained page stays visible and retryable.
 - Published Android certificate verification now accepts equivalent
   `apksigner` output formats across supported Android SDK versions.
-- macOS release/profile configuration now explicitly builds both `x86_64` and
-  `arm64`, independent of the CI runner architecture.
+- macOS release/profile configuration and the Intel CI build host now
+  explicitly build both `x86_64` and `arm64`; the packaged executable and
+  every embedded Mach-O remain verifier-gated.
 
 ### Security
 

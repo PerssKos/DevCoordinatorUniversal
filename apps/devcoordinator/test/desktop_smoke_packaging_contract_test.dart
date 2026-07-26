@@ -45,7 +45,9 @@ void main() {
       expect(debugTarget, isNot(contains('ONLY_ACTIVE_ARCH = NO;')));
       expect(
         workflow,
-        contains(r'''            xcode_archs: x86_64 arm64
+        contains(r'''            os: macos-15-intel
+            build-arguments: macos --release
+            xcode_archs: x86_64 arm64
             xcode_only_active_arch: 'NO'
 '''),
       );

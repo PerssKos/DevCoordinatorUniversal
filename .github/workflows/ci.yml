@@ -65,7 +65,7 @@ jobs:
             build-arguments: apk --release
             upload_smoke: false
           - name: macOS
-            os: macos-15
+            os: macos-15-intel
             build-arguments: macos --release
             xcode_archs: x86_64 arm64
             xcode_only_active_arch: 'NO'
