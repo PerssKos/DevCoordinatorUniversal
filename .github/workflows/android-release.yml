@@ -117,7 +117,15 @@ jobs:
             cd "$RUNNER_TEMP/devcoordinator-release"
             sha256sum --check --strict "$checksum_name"
           )
-          tool/verify_android_release_artifact.sh \
+          # A manual recheck may target an immutable older release. Use the
+          # verifier revision that defined this workflow run, while keeping the
+          # checked-out release source and its validators as the evidence base.
+          current_verifier="tool/.verify_android_release_artifact.current.sh"
+          git show \
+            "$GITHUB_WORKFLOW_SHA:tool/verify_android_release_artifact.sh" \
+            >"$current_verifier"
+          chmod 755 "$current_verifier"
+          "$current_verifier" \
             "$RUNNER_TEMP/devcoordinator-release/$apk_name"
       - name: Verify anonymous latest-release discovery
         shell: bash

@@ -82,7 +82,7 @@ do
 done
 actual_certificate_sha256="$(
   awk -F': ' \
-    '/Signer #1 certificate SHA-256 digest:/ { print tolower($2); exit }' \
+    '/certificate SHA-256 digest:/ { print tolower($NF); exit }' \
     <<<"$verification"
 )"
 if [[ "$actual_certificate_sha256" != "$canonical_certificate_sha256" ]]; then
