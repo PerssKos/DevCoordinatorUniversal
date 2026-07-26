@@ -1,2 +1,6 @@
 #include "../../Flutter/Flutter-Release.xcconfig"
 #include "Warnings.xcconfig"
+
+// Release/Profile packages are universal regardless of the CI host CPU.
+ARCHS = x86_64 arm64
+ONLY_ACTIVE_ARCH = NO

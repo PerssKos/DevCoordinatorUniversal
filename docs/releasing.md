@@ -43,8 +43,10 @@ checksum and a self-signed Windows target-smoke artifact for seven days. The
 macOS job uses `ditto` so framework symlinks and bundle metadata survive the
 artifact round trip, then repeats bundle identity, callback, architecture,
 embedded endpoint/update source, and ad-hoc signature verification against the
-extracted app. These are diagnostics, not production installers, and must
-never be attached to or relabeled as a stable signed release.
+extracted app. The release Xcode configuration explicitly targets `x86_64` and
+`arm64` instead of inheriting the runner's active architecture. These are
+diagnostics, not production installers, and must never be attached to or
+relabeled as a stable signed release.
 
 ## Direct Android release
 

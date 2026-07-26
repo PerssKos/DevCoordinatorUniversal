@@ -3,6 +3,24 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'macOS release build explicitly targets both supported architectures',
+    () {
+      final releaseConfig = _readRepositoryFile(
+        'apps/devcoordinator/macos/Runner/Configs/Release.xcconfig',
+      );
+
+      expect(
+        releaseConfig,
+        matches(RegExp(r'^ARCHS = x86_64 arm64$', multiLine: true)),
+      );
+      expect(
+        releaseConfig,
+        matches(RegExp(r'^ONLY_ACTIVE_ARCH = NO$', multiLine: true)),
+      );
+    },
+  );
+
   test('macOS smoke packaging preserves and rechecks the application bundle', () {
     final workflow = _readRepositoryFile('.github/workflows/ci.yml');
     final packager = _readRepositoryFile('tool/package_macos_smoke.sh');
