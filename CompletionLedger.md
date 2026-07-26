@@ -94,13 +94,18 @@
   that policy decision, the repository intentionally has no `LICENSE` file and
   retains the default copyright restrictions; generated package placeholders
   must not be mistaken for an approved open-source license.
-- Configure production distribution identities and signing: Android
-  upload/Play signing, Apple Developer ID or Mac App Store signing plus
-  notarization, and Windows trusted MSIX/Store signing. The current installable
-  Android artifact is debug-signed only. Verify install-over-previous-version
-  and rollback on real target machines.
-- Build and run signed packaged Android, macOS, and Windows artifacts and
-  verify launch, OAuth/deep-link return, accessibility, update-channel,
-  loading/empty/populated/long/offline/partial/capability-blocked, responsive,
-  upgrade, and rollback journeys on real targets. Linux analysis/widget tests
-  and the debug-signed Android APK do not prove target package readiness.
+- Distribution identities — A dedicated Android direct-distribution key is
+  configured outside Git, and the v0.2.0 APK is release-linted, v2/v3-signed,
+  zip/page-aligned, and verified against its pinned certificate, package,
+  version, merged callback, gateway, update source, and checksum. Confirm an
+  offline owner-controlled key backup and real install-over/rollback behavior;
+  separately configure Play App Signing, Apple Developer ID or Mac App Store
+  signing plus notarization, and Windows trusted MSIX/Store signing.
+- Packaged target acceptance — The production-signed Android APK is built, but
+  still requires a physical owner sign-in/deep-link/inventory/action/refresh/
+  revocation/offline/upgrade/rollback journey. Build and run trusted signed
+  macOS and Windows packages and verify the corresponding OAuth, accessibility,
+  update-channel, loading/empty/populated/long/offline/partial/
+  capability-blocked, responsive, upgrade, and rollback journeys. Linux
+  analysis/widget tests and compile-smoke packages do not prove target package
+  readiness.

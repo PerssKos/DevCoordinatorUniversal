@@ -32,6 +32,7 @@ build_tools_directory="$(
 )"
 apksigner="$build_tools_directory/apksigner"
 aapt="$build_tools_directory/aapt"
+zipalign="$build_tools_directory/zipalign"
 apkanalyzer="$(
   find "$android_sdk_root/cmdline-tools" -type f -path '*/bin/apkanalyzer' \
     -perm -111 -print |
@@ -39,7 +40,7 @@ apkanalyzer="$(
     tail -n 1
 )"
 python_binary="${PYTHON_BIN:-python3}"
-for tool_path in "$apksigner" "$aapt" "$apkanalyzer"; do
+for tool_path in "$apksigner" "$aapt" "$zipalign" "$apkanalyzer"; do
   if [[ -z "$tool_path" || ! -x "$tool_path" ]]; then
     printf 'Required Android executable is unavailable: %s\n' "$tool_path" >&2
     exit 1
@@ -89,6 +90,8 @@ if [[ "$actual_certificate_sha256" != "$canonical_certificate_sha256" ]]; then
     "$actual_certificate_sha256" >&2
   exit 1
 fi
+
+"$zipalign" -c -P 16 -v 4 "$apk_path" >/dev/null
 
 badging="$("$aapt" dump badging "$apk_path")"
 package_line="$(sed -n '1p' <<<"$badging")"
