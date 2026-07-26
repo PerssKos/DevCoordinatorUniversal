@@ -79,9 +79,6 @@ jobs:
           flutter test packages/devcoordinator_design
           flutter test packages/release_update
           flutter test apps/devcoordinator
-      - name: Run Android release lint
-        working-directory: apps/devcoordinator/android
-        run: ./gradlew :app:lintRelease
       - name: Build and sign the canonical APK
         shell: bash
         env:

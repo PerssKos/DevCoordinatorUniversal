@@ -136,12 +136,12 @@ symbols_directory="$release_workspace/symbols"
 (
   cd "$source_app_root"
   "$flutter_binary" pub get --enforce-lockfile
-  android/gradlew -p android :app:lintRelease
   "$flutter_binary" build apk \
     --release \
     --no-pub \
     "--split-debug-info=$symbols_directory" \
     "--dart-define=UPDATE_REPOSITORY=$canonical_repository"
+  android/gradlew -p android :app:lintRelease
 )
 
 unsigned_apk="$source_app_root/build/app/outputs/flutter-apk/app-release.apk"
