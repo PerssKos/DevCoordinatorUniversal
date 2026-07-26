@@ -360,6 +360,251 @@ void main() {
     },
   );
 
+  test(
+    'native event history deduplicates overlapping page boundaries and stops at end',
+    () async {
+      final first = nativeEvent(1);
+      final boundary = nativeEvent(2);
+      final last = nativeEvent(3);
+      final service = FakeNativeService()
+        ..nativeEventResults.addAll(<Object>[
+          nativeEventPage(
+            <NativeGatewayEvent>[first, boundary],
+            nextCursor: 'opaque-page-2',
+            hasMore: true,
+          ),
+          nativeEventPage(<NativeGatewayEvent>[boundary, last]),
+        ]);
+      final controller = nativeController(service);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+
+      await controller.loadNativeEvents();
+
+      expect(service.nativeEventAfterCalls, <String?>[null]);
+      expect(controller.state.nativeEvents.map((event) => event.id), <String>[
+        'event-1',
+        'event-2',
+      ]);
+      expect(controller.state.nativeEventsCursor, 'opaque-page-2');
+      expect(controller.state.nativeEventsHasMore, isTrue);
+
+      await controller.loadNativeEvents();
+
+      expect(service.nativeEventAfterCalls, <String?>[null, 'opaque-page-2']);
+      expect(controller.state.nativeEvents.map((event) => event.id), <String>[
+        'event-1',
+        'event-2',
+        'event-3',
+      ]);
+      expect(controller.state.nativeEventsCursor, isNull);
+      expect(controller.state.nativeEventsHasMore, isFalse);
+      expect(controller.state.nativeEventsError, isNull);
+
+      await controller.loadNativeEvents();
+      expect(service.nativeEventAfterCalls, <String?>[null, 'opaque-page-2']);
+    },
+  );
+
+  test(
+    'failed native event refresh retains history and retries from the beginning',
+    () async {
+      final retained = nativeEvent(1);
+      final replacement = nativeEvent(9);
+      final service = FakeNativeService()
+        ..nativeEventResults.addAll(<Object>[
+          nativeEventPage(
+            <NativeGatewayEvent>[retained],
+            nextCursor: 'retained-cursor',
+            hasMore: true,
+          ),
+          const CoordinatorProtocolException(
+            'Event history is temporarily unavailable.',
+          ),
+          nativeEventPage(<NativeGatewayEvent>[replacement]),
+        ]);
+      final controller = nativeController(service);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.loadNativeEvents();
+
+      await controller.loadNativeEvents(refresh: true);
+
+      expect(service.nativeEventAfterCalls, <String?>[null, null]);
+      expect(controller.state.nativeEvents, <NativeGatewayEvent>[retained]);
+      expect(controller.state.nativeEventsCursor, 'retained-cursor');
+      expect(controller.state.nativeEventsHasMore, isTrue);
+      expect(
+        controller.state.nativeEventsError,
+        'Event history is temporarily unavailable.',
+      );
+
+      await controller.loadNativeEvents(refresh: true);
+
+      expect(service.nativeEventAfterCalls, <String?>[null, null, null]);
+      expect(controller.state.nativeEvents, <NativeGatewayEvent>[replacement]);
+      expect(controller.state.nativeEventsCursor, isNull);
+      expect(controller.state.nativeEventsHasMore, isFalse);
+      expect(controller.state.nativeEventsError, isNull);
+    },
+  );
+
+  test(
+    'non-advancing native event cursor retains the committed page for retry',
+    () async {
+      final retained = nativeEvent(1);
+      final rejected = nativeEvent(2);
+      final service = FakeNativeService()
+        ..nativeEventResults.addAll(<Object>[
+          nativeEventPage(
+            <NativeGatewayEvent>[retained],
+            nextCursor: 'same-cursor',
+            hasMore: true,
+          ),
+          nativeEventPage(
+            <NativeGatewayEvent>[rejected],
+            nextCursor: 'same-cursor',
+            hasMore: true,
+          ),
+          nativeEventPage(<NativeGatewayEvent>[rejected]),
+        ]);
+      final controller = nativeController(service);
+      addTearDown(controller.dispose);
+      await controller.initialize();
+      await controller.loadNativeEvents();
+
+      await controller.loadNativeEvents();
+
+      expect(service.nativeEventAfterCalls, <String?>[null, 'same-cursor']);
+      expect(controller.state.nativeEvents, <NativeGatewayEvent>[retained]);
+      expect(controller.state.nativeEventsCursor, 'same-cursor');
+      expect(controller.state.nativeEventsHasMore, isTrue);
+      expect(
+        controller.state.nativeEventsError,
+        'The event cursor did not advance.',
+      );
+
+      await controller.loadNativeEvents();
+
+      expect(service.nativeEventAfterCalls, <String?>[
+        null,
+        'same-cursor',
+        'same-cursor',
+      ]);
+      expect(controller.state.nativeEvents.map((event) => event.id), <String>[
+        'event-1',
+        'event-2',
+      ]);
+      expect(controller.state.nativeEventsCursor, isNull);
+      expect(controller.state.nativeEventsHasMore, isFalse);
+      expect(controller.state.nativeEventsError, isNull);
+    },
+  );
+
+  for (final viewport in <({String name, Size size})>[
+    (name: 'narrow', size: const Size(390, 844)),
+    (name: 'wide', size: const Size(1440, 900)),
+  ]) {
+    testWidgets(
+      'long ${viewport.name} native event history exposes error retry and end',
+      (tester) async {
+        tester.view
+          ..physicalSize = viewport.size
+          ..devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final firstPage = List<NativeGatewayEvent>.generate(
+          24,
+          nativeEvent,
+          growable: false,
+        );
+        final secondPage = <NativeGatewayEvent>[
+          firstPage.last,
+          ...List<NativeGatewayEvent>.generate(
+            16,
+            (index) => nativeEvent(index + 24),
+            growable: false,
+          ),
+        ];
+        final service = FakeNativeService()
+          ..nativeEventResults.addAll(<Object>[
+            nativeEventPage(
+              firstPage,
+              nextCursor: 'long-page-2',
+              hasMore: true,
+            ),
+            const CoordinatorProtocolException(
+              'Event page temporarily unavailable.',
+            ),
+            nativeEventPage(secondPage),
+          ]);
+        final controller = nativeController(service);
+        addTearDown(controller.dispose);
+        await controller.initialize();
+        controller.selectSection(AppSection.events);
+
+        await tester.pumpWidget(DevCoordinatorApp(controller: controller));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Event history'), findsOne);
+        expect(find.byKey(const ValueKey<String>('native-events')), findsOne);
+        expect(controller.state.nativeEvents, hasLength(24));
+        expect(service.nativeEventAfterCalls, <String?>[null]);
+
+        final historyScrollable = find.descendant(
+          of: find.byKey(const ValueKey<String>('native-events')),
+          matching: find.byType(Scrollable),
+        );
+        expect(historyScrollable, findsOne);
+        await tester.scrollUntilVisible(
+          find.text('Load more'),
+          500,
+          scrollable: historyScrollable,
+        );
+        await tester.drag(historyScrollable, const Offset(0, -160));
+        await tester.pumpAndSettle();
+        expect(find.text('Load more').hitTestable(), findsOne);
+        await tester.tap(find.text('Load more').hitTestable());
+        await tester.pumpAndSettle();
+
+        expect(find.text('Event page temporarily unavailable.'), findsOne);
+        expect(controller.state.nativeEvents, hasLength(24));
+        expect(controller.state.nativeEventsCursor, 'long-page-2');
+        expect(controller.state.nativeEventsHasMore, isTrue);
+        await tester.scrollUntilVisible(
+          find.text('Load more'),
+          500,
+          scrollable: historyScrollable,
+        );
+        await tester.drag(historyScrollable, const Offset(0, -160));
+        await tester.pumpAndSettle();
+        expect(find.text('Load more').hitTestable(), findsOne);
+
+        await tester.tap(find.text('Load more').hitTestable());
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text(eventMessage(39)),
+          500,
+          scrollable: historyScrollable,
+        );
+
+        expect(service.nativeEventAfterCalls, <String?>[
+          null,
+          'long-page-2',
+          'long-page-2',
+        ]);
+        expect(controller.state.nativeEvents, hasLength(40));
+        expect(controller.state.nativeEventsCursor, isNull);
+        expect(controller.state.nativeEventsHasMore, isFalse);
+        expect(controller.state.nativeEventsError, isNull);
+        expect(find.text(eventMessage(39)), findsOne);
+        expect(find.text('Load more'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'Russian native resources disambiguate same-name rows by project',
     (tester) async {
@@ -462,6 +707,42 @@ NativeGatewayResource nativeResource(String id, String projectId) =>
       blockers: const <NativeGatewayBlocker>[],
     );
 
+AppController nativeController(FakeNativeService service) => AppController(
+  settingsStore: FakeSettingsStore(
+    PersistedAppSettings(
+      updateChecksEnabled: false,
+      connection: nativeProfile(),
+    ),
+  ),
+  tokenStore: FakeTokenStore(),
+  coordinatorFactory: FakeNativeFactory(service),
+  updateService: FakeUpdateService(),
+  packageInfoLoader: packageInfoFixture,
+);
+
+String eventMessage(int index) =>
+    'Event ${index.toString().padLeft(2, '0')} — retained server history';
+
+NativeGatewayEvent nativeEvent(int index) => NativeGatewayEvent(
+  id: 'event-$index',
+  kind: 'server.lifecycle',
+  code: 'event_$index',
+  message: eventMessage(index),
+  occurredAt: DateTime.utc(2026, 7, 26, 12).add(Duration(minutes: index)),
+  projectId: 'project-1',
+  resourceId: 'resource-1',
+);
+
+NativeGatewayEventPage nativeEventPage(
+  List<NativeGatewayEvent> events, {
+  String? nextCursor,
+  bool hasMore = false,
+}) => NativeGatewayEventPage(
+  events: events,
+  nextCursor: nextCursor,
+  hasMore: hasMore,
+);
+
 NativeGatewayInventory _defaultInventory() => NativeGatewayInventory(
   revision: 'revision-1',
   observedAt: DateTime.utc(2026),
@@ -520,10 +801,13 @@ final class FakeNativeService implements NativeAppCoordinatorService {
 
   final List<Object?> revokeResults = <Object?>[];
   final List<Object> nativeActionResults = <Object>[];
+  final List<Object> nativeEventResults = <Object>[];
+  final List<String?> nativeEventAfterCalls = <String?>[];
   NativeActionGate nativeActionGate = const NativeActionGate.blocked('blocked');
   int revokeCount = 0;
   int closeCount = 0;
   int nativeActionCount = 0;
+  int nativeEventCount = 0;
 
   final NativeGatewayInventory inventory;
 
@@ -544,6 +828,7 @@ final class FakeNativeService implements NativeAppCoordinatorService {
     pkceMethods: const <NativeGatewayPkceMethod>{NativeGatewayPkceMethod.s256},
     capabilities: NativeGatewayCapabilities(const <NativeGatewayCapability>{
       NativeGatewayCapability.inventoryRead,
+      NativeGatewayCapability.eventsRead,
     }),
   );
 
@@ -579,7 +864,8 @@ final class FakeNativeService implements NativeAppCoordinatorService {
 
   @override
   bool supports(CoordinatorCapability capability) =>
-      capability == CoordinatorCapability.inventoryRead;
+      capability == CoordinatorCapability.inventoryRead ||
+      capability == CoordinatorCapability.eventsRead;
 
   @override
   NativeActionGate canActOnNativeProject(
@@ -636,7 +922,15 @@ final class FakeNativeService implements NativeAppCoordinatorService {
   Future<NativeGatewayEventPage> loadNativeEvents({
     String? after,
     int limit = 100,
-  }) => throw UnimplementedError();
+  }) async {
+    nativeEventAfterCalls.add(after);
+    if (nativeEventCount >= nativeEventResults.length) {
+      throw StateError('No native event result was queued.');
+    }
+    final result = nativeEventResults[nativeEventCount++];
+    if (result is NativeGatewayEventPage) return result;
+    throw result;
+  }
 
   @override
   Future<NativeGatewayLogPage> readNativeLogs(

@@ -6,6 +6,39 @@ Versioning.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-26
+
+### Changed
+
+- Update discovery now reads a bounded, ETag-cached stable-release catalog
+  and selects only the highest newer release with an exact owned asset for the
+  installed platform and distribution channel.
+- Provider responses are streamed through byte and structural limits;
+  unrelated malformed/non-SemVer entries no longer hide valid releases, and
+  comparisons now follow SemVer 2.0 without build-metadata precedence.
+- macOS CI smoke output is verified and archived with `ditto`, preserving
+  framework symlinks and rechecking the extracted universal ad-hoc bundle
+  before upload.
+- Android debug and profile variants use visibly distinct application names;
+  the production APK verifier now also pins the exact release label.
+
+### Fixed
+
+- A failed event-history refresh no longer clears the previously committed
+  events or cursor; the retained page stays visible and retryable.
+- Published Android certificate verification now accepts equivalent
+  `apksigner` output formats across supported Android SDK versions.
+
+### Security
+
+- Direct update eligibility requires one exact, fully uploaded, non-empty
+  asset whose HTTPS download path belongs to the configured repository, tag,
+  and target filename. Android-only releases are not offered to macOS or
+  Windows.
+- Direct handoff cannot be redirected away from the verified installer asset.
+  Store releases require an exact platform/channel/product-identity marker and
+  an official listing URL tied to the same build-pinned Store identity.
+
 ## [0.2.0] - 2026-07-26
 
 ### Added

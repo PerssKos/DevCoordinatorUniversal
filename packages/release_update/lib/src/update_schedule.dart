@@ -25,13 +25,29 @@ final class UpdateCheckSchedule {
     required String sourceId,
     ReleaseCacheEntry? cache,
     DateTime? now,
+  }) => isDueSince(
+    sourceId: sourceId,
+    cachedSourceId: cache?.sourceId,
+    validatedAt: cache?.validatedAt,
+    now: now,
+  );
+
+  /// Whether a source is due using provider-neutral cache identity and time.
+  ///
+  /// This supports both a single latest release and a bounded release catalog
+  /// without coupling the cadence policy to either cache representation.
+  bool isDueSince({
+    required String sourceId,
+    required String? cachedSourceId,
+    required DateTime? validatedAt,
+    DateTime? now,
   }) {
-    if (cache == null || cache.sourceId != sourceId) {
+    if (cachedSourceId != sourceId || validatedAt == null) {
       return true;
     }
 
     final evaluatedAt = (now ?? DateTime.now()).toUtc();
-    final age = evaluatedAt.difference(cache.validatedAt);
+    final age = evaluatedAt.difference(validatedAt);
     return age.isNegative || age >= minimumInterval;
   }
 }

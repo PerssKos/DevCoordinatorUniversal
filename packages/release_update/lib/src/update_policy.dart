@@ -1,6 +1,7 @@
 import 'package:pub_semver/pub_semver.dart';
 
 import 'release_models.dart';
+import 'semver_precedence.dart';
 
 /// Persistent user choices that suppress prompts for known release versions.
 ///
@@ -80,12 +81,12 @@ final class UpdateSuppression {
   UpdateSuppression _withIgnoredThrough(Version version) {
     final existing = ignoredThroughVersion;
     final threshold =
-        existing == null || _compareSemVerPrecedence(existing, version) < 0
+        existing == null || compareSemVerPrecedence(existing, version) < 0
         ? version
         : existing;
     final deferred = deferredThroughVersion;
     final shouldClearDeferred =
-        deferred != null && _compareSemVerPrecedence(deferred, threshold) <= 0;
+        deferred != null && compareSemVerPrecedence(deferred, threshold) <= 0;
     return UpdateSuppression._(
       ignoredThroughVersion: threshold,
       deferredThroughVersion: shouldClearDeferred ? null : deferred,
@@ -101,14 +102,14 @@ final class UpdateSuppression {
     final existingUntil = deferredUntil;
     if (existingVersion != null &&
         existingUntil != null &&
-        _compareSemVerPrecedence(existingVersion, version) > 0) {
+        compareSemVerPrecedence(existingVersion, version) > 0) {
       return this;
     }
     final normalizedUntil = until.toUtc();
     final deadline =
         existingVersion != null &&
             existingUntil != null &&
-            _compareSemVerPrecedence(existingVersion, version) == 0 &&
+            compareSemVerPrecedence(existingVersion, version) == 0 &&
             existingUntil.isAfter(normalizedUntil)
         ? existingUntil
         : normalizedUntil;
@@ -229,7 +230,7 @@ final class UpdatePolicy {
     UpdateSuppression suppression = const UpdateSuppression.none(),
     DateTime? now,
   }) {
-    final comparison = _compareSemVerPrecedence(
+    final comparison = compareSemVerPrecedence(
       latestRelease.version,
       currentVersion,
     );
@@ -250,7 +251,7 @@ final class UpdatePolicy {
 
     final ignored = suppression.ignoredThroughVersion;
     if (ignored != null &&
-        _compareSemVerPrecedence(latestRelease.version, ignored) <= 0) {
+        compareSemVerPrecedence(latestRelease.version, ignored) <= 0) {
       return UpdateDecision._(
         kind: UpdateDecisionKind.ignored,
         currentVersion: currentVersion,
@@ -263,7 +264,7 @@ final class UpdatePolicy {
     final evaluatedAt = (now ?? DateTime.now()).toUtc();
     if (deferredThrough != null &&
         deferredUntil != null &&
-        _compareSemVerPrecedence(latestRelease.version, deferredThrough) <= 0 &&
+        compareSemVerPrecedence(latestRelease.version, deferredThrough) <= 0 &&
         evaluatedAt.isBefore(deferredUntil)) {
       return UpdateDecision._(
         kind: UpdateDecisionKind.deferred,
@@ -279,25 +280,6 @@ final class UpdatePolicy {
       latestRelease: latestRelease,
     );
   }
-}
-
-int _compareSemVerPrecedence(Version left, Version right) {
-  // pub_semver intentionally orders build identifiers for pub's version
-  // solver. SemVer 2.0.0 excludes build metadata from precedence, which is
-  // the behavior an application update check requires.
-  final leftWithoutBuild = Version(
-    left.major,
-    left.minor,
-    left.patch,
-    pre: left.preRelease.isEmpty ? null : left.preRelease.join('.'),
-  );
-  final rightWithoutBuild = Version(
-    right.major,
-    right.minor,
-    right.patch,
-    pre: right.preRelease.isEmpty ? null : right.preRelease.join('.'),
-  );
-  return leftWithoutBuild.compareTo(rightWithoutBuild);
 }
 
 String? _optionalString(Map<String, Object?> json, String key) {

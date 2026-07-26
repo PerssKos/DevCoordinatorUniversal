@@ -67,6 +67,14 @@ Store, Mac App Store, or a signed direct-release page. It must return failure
 when the platform did not accept the handoff and must never silently install an
 unsigned artifact.
 
+For a direct GitHub channel, add one exact production asset naming rule,
+validate its HTTPS URL against the configured repository and release tag, and
+open that verified asset rather than a configurable redirect. Keep
+diagnostic/smoke names ineligible. If a new Store channel is added, define an
+exact repository-owned publication marker plus an official-origin destination
+bound to that Store's application identity; never infer a channel from a URL
+or release-body text.
+
 ## Regenerate application icons
 
 Edit the primary vector at `assets/branding/app_icon.svg` and its legacy

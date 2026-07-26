@@ -21,7 +21,9 @@ Future<void> main() async {
       callbackRouter: callbackRouter,
       browserLauncher: const PlatformNativeSystemBrowserLauncher(),
     ),
-    updateService: RepositoryAppUpdateService(),
+    updateService: RepositoryAppUpdateService(
+      target: AppUpdateTarget.current(),
+    ),
   );
 
   runApp(DevCoordinatorApp(controller: controller));

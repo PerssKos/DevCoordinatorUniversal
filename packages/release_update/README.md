@@ -5,9 +5,15 @@ GitHub Releases.
 
 The package:
 
-- calls GitHub's latest stable release endpoint;
+- calls GitHub's latest stable release endpoint and a bounded stable-release
+  catalog endpoint;
 - sends and returns opaque `ETag` values for conditional requests;
+- streams provider responses through byte/time limits, bounds release/asset
+  counts and material fields, and safely reads pre-asset caches as an empty,
+  fail-closed asset list;
 - parses `v1.2.3` and `1.2.3` tags as semantic versions;
+- selects the highest compatible SemVer 2.0 precedence independently of
+  provider list order and never uses build metadata as precedence;
 - distinguishes available, current, downgrade, ignored, and deferred results;
 - serializes the cache and user-suppression values that the host application
   must persist;
@@ -77,6 +83,13 @@ Future<void> checkForUpdate({
 `GitHubReleaseSource` does not own or close its injected `http.Client`.
 `ReleaseUpdateChecker` only reuses a cache whose `sourceId` matches its source,
 preventing an `ETag` from one repository being sent to another.
+Applications with platform-specific artifacts should use
+`ReleaseCatalogChecker` and `ReleaseCatalogPolicy`; the default catalog is
+bounded to 20 provider entries, filters draft/prerelease entries, and has a
+separate source identity so an old `/latest` validator cannot cross into the
+catalog cache. Non-SemVer release entries and unrelated incomplete/malformed
+assets are skipped independently; a matching malformed name/identifier taints
+that candidate so it cannot become eligible through a duplicate.
 Automatic checks use a 24-hour minimum interval by default; inject
 `UpdateCheckSchedule` to change it. Manual checks always contact the source.
 

@@ -15,6 +15,7 @@ apk_path="$(realpath -e "$1")"
 canonical_repository="PerssKos/DevCoordinatorUniversal"
 canonical_gateway="https://console.classified.guru/api/v2"
 canonical_package="io.github.holyglory.devcoordinator"
+canonical_application_label="DevCoordinator"
 canonical_certificate_sha256="0bbd3187d8e2ea0ee678c57108760cb4078816d90e250ff5dedbe9e632367232"
 
 android_sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
@@ -104,11 +105,16 @@ actual_version_code="$(
 actual_version_name="$(
   sed -n "s/.* versionName='\\([^']*\\)'.*/\\1/p" <<<"$package_line"
 )"
+actual_application_label="$(
+  sed -n "s/^application-label:'\\([^']*\\)'$/\\1/p" <<<"$badging"
+)"
 if [[ "$actual_package" != "$canonical_package" \
   || "$actual_version_code" != "$version_code" \
-  || "$actual_version_name" != "$version_name" ]]; then
-  printf 'Unexpected APK identity: package=%s versionCode=%s versionName=%s\n' \
-    "$actual_package" "$actual_version_code" "$actual_version_name" >&2
+  || "$actual_version_name" != "$version_name" \
+  || "$actual_application_label" != "$canonical_application_label" ]]; then
+  printf 'Unexpected APK identity: package=%s versionCode=%s versionName=%s label=%s\n' \
+    "$actual_package" "$actual_version_code" "$actual_version_name" \
+    "$actual_application_label" >&2
   exit 1
 fi
 

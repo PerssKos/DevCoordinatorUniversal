@@ -1074,12 +1074,11 @@ final class AppController extends ChangeNotifier {
         ? const <NativeGatewayEvent>[]
         : _state.nativeEvents;
     final priorCursor = refresh ? null : _state.nativeEventsCursor;
+    // Keep the committed page and cursor visible until a refresh succeeds so
+    // a transient failure remains retryable without discarding history.
     _state = _state.copyWith(
       nativeEventsLoading: true,
       clearNativeEventsError: true,
-      clearNativeEvents: refresh,
-      clearNativeEventsCursor: refresh,
-      nativeEventsHasMore: true,
     );
     notifyListeners();
     try {

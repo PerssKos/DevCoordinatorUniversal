@@ -64,12 +64,30 @@ flutter run -d <device>
 GitHub Actions injects the current `owner/repository` into every target build,
 so its ephemeral build-smoke binaries target that repository's Releases.
 Android debug and unsigned-release smokes are compiled but never uploaded.
-The workflow retains clearly labeled ad-hoc macOS and self-signed Windows
-smoke artifacts for seven days so target compilation can be inspected; they
+The workflow retains a clearly labeled, symlink-preserving ad-hoc macOS ZIP
+with its SHA-256 checksum and a self-signed Windows smoke artifact for seven
+days so target compilation and packaging can be inspected. The macOS bundle is
+verified both before archiving and after a `ditto` round trip. These artifacts
 are not production installers and are never attached to a stable Release. For
 a local build, pass
-`--dart-define=UPDATE_REPOSITORY=owner/repository`. An optional
-`UPDATE_DESTINATION_URL` must be HTTPS.
+`--dart-define=UPDATE_REPOSITORY=owner/repository`. The optional
+`UPDATE_DISTRIBUTION_CHANNEL` is one of `direct`, `play`, `mac_app_store`, or
+`microsoft_store` and must match the build platform; it defaults to `direct`.
+Direct builds reject `UPDATE_DESTINATION_URL` and open only their verified
+installer asset. Store builds require their exact official
+`UPDATE_DESTINATION_URL`; Mac App Store and Microsoft Store builds also require
+the product identity assigned by the Store in `UPDATE_STORE_PRODUCT_ID`.
+
+Direct update checks read a bounded stable-release catalog and select the
+highest newer release containing the exact owned target asset:
+`DevCoordinator-<version>-android.apk`,
+`DevCoordinator-<version>-macos.dmg`, or
+`DevCoordinator-<version>-windows.msix`. An Android-only release is therefore
+never presented as a macOS or Windows update. Store discovery likewise
+requires an exact repository-owned
+`DevCoordinator-<version>-<platform>-<store>-<product-id>.release.json` marker
+uploaded only after that version is visible for the same application identity
+in the matching Store.
 
 See [architecture](docs/architecture.md), [extension guide](docs/extending.md),
 [release operations](docs/releasing.md), and the active

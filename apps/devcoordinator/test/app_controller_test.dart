@@ -839,6 +839,54 @@ void main() {
     );
 
     test(
+      'presents wrong-channel discovery as information without an update',
+      () async {
+        const message =
+            'Version 2.0.0 is published, but it has no newer update for this '
+            'direct macOS build. Expected the exact owned asset '
+            '"DevCoordinator-2.0.0-macos.dmg".';
+        final checkedAt = DateTime.utc(2030, 1, 1);
+        final cache = <String, Object?>{
+          'sourceId': 'github-catalog:example',
+          'releases': <Object?>[],
+          'validatedAt': checkedAt.toIso8601String(),
+        };
+        final updateService = FakeUpdateService()
+          ..result = AppUpdateResult(
+            message: message,
+            checkedAt: checkedAt,
+            releaseCache: cache,
+          );
+        final settingsStore = FakeSettingsStore(
+          const PersistedAppSettings(updateChecksEnabled: false),
+        );
+        final controller = AppController(
+          settingsStore: settingsStore,
+          tokenStore: FakeTokenStore(),
+          coordinatorFactory: FakeCoordinatorServiceFactory(
+            service: FakeCoordinatorService(),
+          ),
+          updateService: updateService,
+          packageInfoLoader: packageInfoFixture,
+        );
+        addTearDown(controller.dispose);
+        await controller.initialize();
+
+        await controller.checkForUpdates(manual: true);
+
+        expect(controller.state.availableRelease, isNull);
+        expect(controller.state.updateMessage, message);
+        expect(
+          controller.state.updateMessageKind,
+          UpdateMessageKind.informational,
+        );
+        expect(controller.state.settings.lastUpdateCheck, checkedAt);
+        expect(controller.state.settings.releaseCache, same(cache));
+        expect(settingsStore.value.releaseCache, same(cache));
+      },
+    );
+
+    test(
       'retains a discovered release when its cache cannot be persisted',
       () async {
         final settingsStore = FakeSettingsStore(

@@ -1,12 +1,12 @@
 # Completion Ledger
 
-- Event-history target acceptance — The typed cursor API is connected through
-  the adapter and controller to a server-ordered paginated Events destination
-  with refresh, error, retry, end, and page-boundary deduplication behavior.
-  Add deterministic controller/widget coverage for multi-page boundary
-  deduplication, refresh failure, retry, and long narrow/wide histories, then
-  exercise the same states against the packaged targets. No event payload or
-  unsafe cursor is persisted.
+- Event-history packaged-target acceptance — The typed cursor API and
+  deterministic controller/widget coverage now prove multi-page boundary
+  deduplication, non-advancing-cursor rejection, retained-history refresh
+  failure and retry, explicit end state, and long narrow/wide histories.
+  Exercise those same states through the packaged Android, macOS, and Windows
+  targets before removing this item. No event payload or unsafe cursor is
+  persisted.
 - Durable port assignments — Parse the canonical assignment collection into
   typed models and expose it before secondary lease controls, with truthful
   retained/active/conflict states and immutable target labels. Verify parser,
@@ -89,12 +89,13 @@
   retains the default copyright restrictions; generated package placeholders
   must not be mistaken for an approved open-source license.
 - Distribution identities — A dedicated Android direct-distribution key is
-  configured outside Git, and the v0.2.0 APK is release-linted, v2/v3-signed,
-  zip/page-aligned, and verified against its pinned certificate, package,
-  version, merged callback, gateway, update source, and checksum. Confirm an
-  offline owner-controlled key backup and real install-over/rollback behavior;
-  separately configure Play App Signing, Apple Developer ID or Mac App Store
-  signing plus notarization, and Windows trusted MSIX/Store signing.
+  configured outside Git, and the canonical APK pipeline release-lints,
+  v2/v3-signs, zip/page-aligns, and verifies each artifact against its pinned
+  certificate, label, package, version, merged callback, gateway, update
+  source, and checksum. Confirm an offline owner-controlled key backup and real
+  install-over/rollback behavior; separately configure Play App Signing, Apple
+  Developer ID or Mac App Store signing plus notarization, and Windows trusted
+  MSIX/Store signing.
 - Packaged target acceptance — The production-signed Android APK is built, but
   still requires a physical owner sign-in/deep-link/inventory/action/refresh/
   revocation/offline/upgrade/rollback journey. Build and run trusted signed

@@ -69,7 +69,7 @@ jobs:
             build-arguments: macos --release
             upload_smoke: true
             artifact_name: macos-adhoc-smoke
-            artifact_path: source/apps/devcoordinator/build/macos/Build/Products/Release/*.app
+            artifact_path: source/apps/devcoordinator/build/smoke/macos/*
           - name: Windows
             os: windows-2025
             build-arguments: windows --release
@@ -106,6 +106,12 @@ jobs:
           dart run msix:create
           --build-windows false
           --install-certificate false
+      - name: Verify and archive the ad-hoc macOS smoke app
+        if: matrix.name == 'macOS'
+        working-directory: source
+        run: >-
+          tool/package_macos_smoke.sh
+          apps/devcoordinator/build/macos/Build/Products/Release/DevCoordinator.app
       - name: Run Android release lint
         if: matrix.name == 'Android release smoke'
         working-directory: source/apps/devcoordinator/android

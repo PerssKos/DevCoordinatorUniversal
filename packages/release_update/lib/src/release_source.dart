@@ -12,6 +12,21 @@ abstract interface class ReleaseSource {
   Future<ReleaseFetchResult> fetchLatest({String? ifNoneMatch});
 }
 
+/// Retrieves a bounded catalog of stable releases from a remote provider.
+///
+/// Catalog consumers can apply platform and distribution-channel eligibility
+/// without making provider adapters aware of application-specific file names.
+abstract interface class StableReleaseCatalogSource {
+  /// Stable key used to prevent validators being reused across catalogs.
+  String get catalogSourceId;
+
+  /// Maximum number of provider releases inspected by one request.
+  int get maximumCatalogSize;
+
+  /// Fetches a bounded catalog of non-draft, non-prerelease releases.
+  Future<ReleaseCatalogFetchResult> fetchStableReleases({String? ifNoneMatch});
+}
+
 /// Result of a conditional release fetch.
 sealed class ReleaseFetchResult {
   const ReleaseFetchResult({required this.etag});
@@ -33,6 +48,29 @@ final class ReleaseFetched extends ReleaseFetchResult {
 final class ReleaseNotModified extends ReleaseFetchResult {
   /// Creates a not-modified result.
   const ReleaseNotModified({required super.etag});
+}
+
+/// Result of a conditional stable-release catalog fetch.
+sealed class ReleaseCatalogFetchResult {
+  const ReleaseCatalogFetchResult({required this.etag});
+
+  /// Response validator, if supplied by the provider.
+  final String? etag;
+}
+
+/// A provider returned fresh stable-release metadata.
+final class ReleaseCatalogFetched extends ReleaseCatalogFetchResult {
+  /// Creates a successful catalog fetch result.
+  const ReleaseCatalogFetched({required this.releases, required super.etag});
+
+  /// Stable releases within the source's documented bound.
+  final List<ReleaseInfo> releases;
+}
+
+/// A provider confirmed that a cached stable catalog is still current.
+final class ReleaseCatalogNotModified extends ReleaseCatalogFetchResult {
+  /// Creates a not-modified catalog result.
+  const ReleaseCatalogNotModified({required super.etag});
 }
 
 /// Base class for expected update-service failures.
@@ -120,4 +158,10 @@ final class ReleasePayloadException extends ReleaseUpdateException {
 final class ReleaseCacheMissException extends ReleaseUpdateException {
   /// Creates a cache protocol failure.
   const ReleaseCacheMissException(super.message);
+}
+
+/// A provider or persisted catalog exceeded its declared structural bound.
+final class ReleaseCatalogBoundsException extends ReleaseUpdateException {
+  /// Creates a provider-neutral catalog-bound failure.
+  const ReleaseCatalogBoundsException(super.message);
 }

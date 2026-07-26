@@ -11,7 +11,10 @@ repository is newer. See
 [DCU-2026-07-25-01](DecisionDetails/DCU-2026-07-25-01.md),
 [DCU-2026-07-25-02](DecisionDetails/DCU-2026-07-25-02.md),
 [DCU-2026-07-25-03](DecisionDetails/DCU-2026-07-25-03.md), and
-[DCU-2026-07-25-04](DecisionDetails/DCU-2026-07-25-04.md). The production
+[DCU-2026-07-25-04](DecisionDetails/DCU-2026-07-25-04.md). Update discovery
+is specific to the installed platform and distribution channel; an
+Android-only release is not a macOS or Windows update. See
+[DCU-2026-07-26-10](DecisionDetails/DCU-2026-07-26-10.md). The production
 remote connection is one action against
 `https://console.classified.guru/api/v2`, not a hostname, host bearer, or
 “local desktop” setup journey. See
@@ -38,6 +41,33 @@ lifecycle management stays hidden, exact requested port ranges pass through,
 and lease release depends on the server's device-session ownership result. See
 [DCU-2026-07-26-06](DecisionDetails/DCU-2026-07-26-06.md) and
 [DCU-2026-07-26-07](DecisionDetails/DCU-2026-07-26-07.md).
+
+## DCU-2026-07-26-10 — Update discovery selects a compatible release target
+
+ID: DCU-2026-07-26-10 · Details:
+[supporting record](DecisionDetails/DCU-2026-07-26-10.md)
+
+Decision: Supersede the latest-release-only discovery portion of
+DCU-2026-07-25-04 with a bounded, ETag-cached catalog of stable releases.
+Direct builds select the highest newer SemVer that contains one exact,
+non-empty, canonical-repository asset for their compile-time platform and
+channel; Store builds additionally require an exact owned publication marker
+for that platform/channel/product identity plus an official listing URL tied
+to the same build-pinned Store identity. Direct builds open the verified
+installer itself and reject a destination override. A newer incompatible
+release is silent during automatic checks and is explained during a manual
+check.
+
+Why: Reading only the newest repository release could offer an Android APK to
+macOS or Windows, while filtering only that release could hide an older but
+still newer compatible desktop package. Requiring every release to ship every
+platform would block safe independent Android delivery on unavailable Apple
+or Windows publisher identities; trusting arbitrary filenames or redirects
+would weaken repository and channel ownership. Treating any stable repository
+release as proof of Store publication was also rejected because an
+Android-direct release says nothing about Apple or Microsoft availability.
+Bounded catalog selection with exact owned assets preserves independent
+release cadence, truthful prompts, and channel-specific installation.
 
 ## DCU-2026-07-26-09 — Stable Android releases are signed off GitHub
 

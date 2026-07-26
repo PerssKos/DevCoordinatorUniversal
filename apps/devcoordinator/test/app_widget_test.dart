@@ -533,6 +533,47 @@ void main() {
   });
 
   testWidgets(
+    'wrong-channel manual result stays informational and never prompts',
+    (tester) async {
+      _setViewport(tester, const Size(1200, 900));
+      const message =
+          'Version 2.0.0 is published, but it has no newer update for this '
+          'direct Windows build. Expected the exact owned asset '
+          '"DevCoordinator-2.0.0-windows.msix".';
+      final updateService = FakeUpdateService()
+        ..result = const AppUpdateResult(message: message);
+      final setup = await _connectedSetup(
+        emptyInventory(),
+        updateService: updateService,
+      );
+      addTearDown(setup.controller.dispose);
+      setup.controller.selectSection(AppSection.settings);
+
+      await tester.pumpWidget(DevCoordinatorApp(controller: setup.controller));
+      await tester.pumpAndSettle();
+      final checkButton = find.widgetWithText(AppButton, 'Check for updates');
+      await tester.ensureVisible(checkButton);
+      await tester.pumpAndSettle();
+      await tester.tap(checkButton);
+      await tester.pumpAndSettle();
+
+      final messageFinder = find.text(message);
+      expect(messageFinder, findsOne);
+      final status = tester.widget<AppStatus>(
+        find.ancestor(of: messageFinder, matching: find.byType(AppStatus)),
+      );
+      expect(status.tone, AppStatusTone.info);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(setup.controller.state.availableRelease, isNull);
+      expect(
+        setup.controller.state.updateMessageKind,
+        UpdateMessageKind.informational,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'root provides high-contrast themes and reacts to reduced-motion flags',
     (tester) async {
       tester.platformDispatcher.accessibilityFeaturesTestValue =

@@ -14,6 +14,25 @@ docs/                             product, architecture, release operations
 Features do not own transport, credential storage, or update policy. The app
 composition root injects those services and exposes immutable view state.
 
+## Release discovery boundary
+
+Update checks read a bounded, ETag-cached catalog of stable GitHub Releases.
+The application build supplies one explicit platform and distribution
+channel. A direct build selects the highest newer SemVer containing exactly
+one non-empty canonical-repository asset named for that target; Play, Mac App
+Store, and Microsoft Store builds require a matching channel, an exact
+repository-owned platform/channel/product-identity marker uploaded after Store
+publication, and an official Store destination tied to that same identity.
+Drafts, prereleases, foreign URLs, incomplete assets, smoke artifacts, and
+assets for another platform are never eligible. An unrelated malformed
+release entry is ignored rather than hiding an older valid target.
+
+The catalog is notification metadata, not an installer authority. Android,
+Apple, and Windows package signatures remain the installation identity, and
+the application never executes or silently installs an arbitrary release
+asset. Direct handoff opens the verified owned installer URL itself; it cannot
+be redirected with a build-time destination override.
+
 ## Connection modes
 
 ### Local legacy v1
