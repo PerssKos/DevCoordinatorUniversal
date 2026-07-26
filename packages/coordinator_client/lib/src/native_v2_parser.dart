@@ -10,12 +10,18 @@ import 'native_v2_models.dart';
 final class NativeGatewayV2Parser {
   const NativeGatewayV2Parser();
 
-  NativeGatewayMeta parseMeta(Object? json) {
+  NativeGatewayMeta parseMeta(Object? json, {required Uri gatewayEndpoint}) {
     final root = _V2Object.root(json)
       ..only(const {
         'contractVersion',
         'serverVersion',
         'minimumClientVersion',
+        'issuer',
+        'authorizationEndpoint',
+        'tokenEndpoint',
+        'revocationEndpoint',
+        'publicClientId',
+        'pkceMethods',
         'capabilities',
       });
     final contractVersion = root.string('contractVersion');
@@ -39,6 +45,49 @@ final class NativeGatewayV2Parser {
       }
     }
 
+    final expectedGateway = _httpsEndpoint(
+      gatewayEndpoint.toString(),
+      r'$.gatewayEndpoint',
+    );
+    final issuer = _httpsEndpoint(root.string('issuer'), '${root.path}.issuer');
+    if (!_sameOrigin(issuer, expectedGateway)) {
+      throw CoordinatorProtocolException(
+        'Native gateway issuer does not match the requested gateway origin.',
+        path: '${root.path}.issuer',
+      );
+    }
+    final authorizationEndpoint = _sameOriginOAuthEndpoint(
+      root.string('authorizationEndpoint'),
+      '${root.path}.authorizationEndpoint',
+      issuer,
+    );
+    final tokenEndpoint = _sameOriginOAuthEndpoint(
+      root.string('tokenEndpoint'),
+      '${root.path}.tokenEndpoint',
+      issuer,
+    );
+    final revocationEndpoint = _sameOriginOAuthEndpoint(
+      root.string('revocationEndpoint'),
+      '${root.path}.revocationEndpoint',
+      issuer,
+    );
+    final publicClientId = root.nonEmptyString('publicClientId');
+    if (publicClientId.length > 256 ||
+        publicClientId.contains(RegExp(r'[\u0000-\u001f\u007f]'))) {
+      throw CoordinatorProtocolException(
+        'Invalid OAuth public client identifier.',
+        path: '${root.path}.publicClientId',
+      );
+    }
+    final wirePkceMethods = root.uniqueStrings('pkceMethods');
+    if (wirePkceMethods.length != 1 ||
+        !wirePkceMethods.contains(NativeGatewayPkceMethod.s256.wireValue)) {
+      throw CoordinatorProtocolException(
+        'Native gateway must advertise only PKCE S256.',
+        path: '${root.path}.pkceMethods',
+      );
+    }
+
     final wireCapabilities = root.uniqueStrings('capabilities');
     final known = <NativeGatewayCapability>{};
     for (final wireValue in wireCapabilities) {
@@ -59,6 +108,12 @@ final class NativeGatewayV2Parser {
       contractVersion: contractVersion,
       serverVersion: serverVersion,
       minimumClientVersion: minimumClientVersion,
+      issuer: issuer,
+      authorizationEndpoint: authorizationEndpoint,
+      tokenEndpoint: tokenEndpoint,
+      revocationEndpoint: revocationEndpoint,
+      publicClientId: publicClientId,
+      pkceMethods: const {NativeGatewayPkceMethod.s256},
       capabilities: NativeGatewayCapabilities(known),
     );
   }
@@ -320,13 +375,45 @@ final class NativeGatewayV2Parser {
   }
 
   NativeGatewayPortLease _parseLease(_V2Object value) {
-    value.only(const {'id', 'projectId', 'port', 'purpose', 'expiresAt'});
+    value.only(const {
+      'id',
+      'projectId',
+      'serverResourceId',
+      'port',
+      'purpose',
+      'status',
+      'releasable',
+      'expiresAt',
+      'createdAt',
+    });
+    final serverResourceId = value.optionalNullableString('serverResourceId');
+    if (serverResourceId != null && serverResourceId.trim().isEmpty) {
+      throw CoordinatorProtocolException(
+        'Expected a non-empty server identity.',
+        path: '${value.path}.serverResourceId',
+      );
+    }
+    final status = _portLeaseStatus(
+      value.string('status'),
+      '${value.path}.status',
+    );
+    final releasable = value.boolean('releasable');
+    if (releasable && status != NativeGatewayPortLeaseStatus.active) {
+      throw CoordinatorProtocolException(
+        'Only an active lease may be releasable.',
+        path: '${value.path}.releasable',
+      );
+    }
     return NativeGatewayPortLease(
       id: value.nonEmptyString('id'),
       projectId: value.nonEmptyString('projectId'),
+      serverResourceId: serverResourceId,
       port: value.integer('port', minimum: 1, maximum: 65535),
       purpose: value.string('purpose'),
-      expiresAt: value.dateTime('expiresAt'),
+      status: status,
+      releasable: releasable,
+      expiresAt: value.optionalNullableDateTime('expiresAt'),
+      createdAt: value.optionalNullableDateTime('createdAt'),
     );
   }
 
@@ -660,6 +747,39 @@ String _uriReference(String value, String path) {
   return value;
 }
 
+Uri _httpsEndpoint(String value, String path) {
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      !uri.isAbsolute ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment) {
+    throw CoordinatorProtocolException(
+      'Expected an absolute HTTPS URL without credentials, query, or fragment.',
+      path: path,
+    );
+  }
+  return uri;
+}
+
+Uri _sameOriginOAuthEndpoint(String value, String path, Uri issuer) {
+  final uri = _httpsEndpoint(value, path);
+  if (!_sameOrigin(uri, issuer)) {
+    throw CoordinatorProtocolException(
+      'OAuth endpoint does not match the native gateway issuer origin.',
+      path: path,
+    );
+  }
+  return uri;
+}
+
+bool _sameOrigin(Uri first, Uri second) =>
+    first.scheme == second.scheme &&
+    first.host.toLowerCase() == second.host.toLowerCase() &&
+    first.port == second.port;
+
 bool _isEmail(String value) =>
     value.length <= 320 &&
     !value.contains(RegExp(r'\s')) &&
@@ -699,6 +819,17 @@ NativeGatewayResourceAction _resourceAction(String value, String path) =>
       'restart' => NativeGatewayResourceAction.restart,
       _ => throw CoordinatorProtocolException(
         'Unknown resource action.',
+        path: path,
+      ),
+    };
+
+NativeGatewayPortLeaseStatus _portLeaseStatus(String value, String path) =>
+    switch (value) {
+      'active' => NativeGatewayPortLeaseStatus.active,
+      'released' => NativeGatewayPortLeaseStatus.released,
+      'stale' => NativeGatewayPortLeaseStatus.stale,
+      _ => throw CoordinatorProtocolException(
+        'Unknown port lease status.',
         path: path,
       ),
     };

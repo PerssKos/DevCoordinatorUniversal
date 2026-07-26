@@ -25,7 +25,10 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // Keep SemVer identical to the declared Flutter version so the
+            // native gateway's minimum-client comparison remains correct.
+            // The distinct .debug application ID still makes the channel
+            // explicit and preserves install-over compatibility for testers.
         }
         release {
             // Production signing must be supplied by the approved release

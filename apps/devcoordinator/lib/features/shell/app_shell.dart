@@ -7,6 +7,7 @@ import '../../app/app_state.dart';
 import '../../core/localization/app_strings.dart';
 import '../setup/connection_setup_screen.dart';
 import 'collection_screens.dart';
+import 'native_collection_screens.dart';
 import 'overview_screen.dart';
 import 'settings_screen.dart';
 
@@ -20,7 +21,8 @@ final class UniversalAppShell extends StatelessWidget {
     final state = controller.state;
     final strings = AppStrings.of(context);
 
-    if (state.settings.connection == null || state.inventory == null) {
+    if (state.settings.connection == null ||
+        (state.inventory == null && state.nativeInventory == null)) {
       return AppScaffold(body: ConnectionSetupScreen(controller: controller));
     }
 
@@ -75,6 +77,13 @@ final class UniversalAppShell extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
+              if (state.lastNativeOperation != null) ...<Widget>[
+                _NativeOperationBanner(
+                  operation: state.lastNativeOperation!,
+                  onDismiss: controller.dismissLastNativeOperation,
+                ),
+                const SizedBox(height: 12),
+              ],
               if (state.connectionError != null) ...<Widget>[
                 _MessageBanner(
                   message: state.connectionError!,
@@ -96,6 +105,36 @@ final class UniversalAppShell extends StatelessWidget {
     AppSection section, {
     required bool compact,
   }) {
+    final nativeInventory = controller.state.nativeInventory;
+    if (nativeInventory != null) {
+      return switch (section) {
+        AppSection.overview => NativeOverviewScreen(
+          controller: controller,
+          inventory: nativeInventory,
+        ),
+        AppSection.projects => NativeProjectsScreen(
+          controller: controller,
+          inventory: nativeInventory,
+        ),
+        AppSection.servers => NativeResourcesScreen(
+          controller: controller,
+          inventory: nativeInventory,
+          kind: NativeGatewayResourceKind.server,
+        ),
+        AppSection.containers => NativeResourcesScreen(
+          controller: controller,
+          inventory: nativeInventory,
+          kind: NativeGatewayResourceKind.container,
+        ),
+        AppSection.ports => NativePortsScreen(
+          controller: controller,
+          inventory: nativeInventory,
+        ),
+        AppSection.events => NativeEventsScreen(controller: controller),
+        AppSection.settings => SettingsScreen(controller: controller),
+        AppSection.more => MoreScreen(controller: controller),
+      };
+    }
     final inventory = controller.state.inventory!;
     return switch (section) {
       AppSection.overview => OverviewScreen(
@@ -237,6 +276,67 @@ final class UniversalAppShell extends StatelessWidget {
       AppSection.settings => strings.settings,
       AppSection.more => strings.text(en: 'More', ru: 'Ещё'),
     };
+  }
+}
+
+final class _NativeOperationBanner extends StatelessWidget {
+  const _NativeOperationBanner({
+    required this.operation,
+    required this.onDismiss,
+  });
+
+  final NativeGatewayOperation operation;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final strings = AppStrings.of(context);
+    final label = switch (operation.status) {
+      NativeGatewayOperationStatus.succeeded => strings.text(
+        en: 'Operation completed successfully.',
+        ru: 'Операция успешно завершена.',
+      ),
+      NativeGatewayOperationStatus.partial => strings.text(
+        en: 'Operation completed only partially. Review every target result.',
+        ru: 'Операция выполнена частично. Проверьте результат каждой цели.',
+      ),
+      NativeGatewayOperationStatus.needsAttention => strings.text(
+        en: 'Operation needs attention. Its target results were retained.',
+        ru: 'Операция требует внимания. Результаты целей сохранены.',
+      ),
+      NativeGatewayOperationStatus.failed ||
+      NativeGatewayOperationStatus.timedOut ||
+      NativeGatewayOperationStatus.cancelled => strings.text(
+        en: 'Operation did not complete. Review its retained target results.',
+        ru: 'Операция не завершена. Проверьте сохранённые результаты целей.',
+      ),
+      NativeGatewayOperationStatus.queued ||
+      NativeGatewayOperationStatus.running => strings.text(
+        en: 'Operation is still in progress.',
+        ru: 'Операция ещё выполняется.',
+      ),
+    };
+    final tone = operation.isSuccessful
+        ? AppStatusTone.success
+        : operation.needsAttention ||
+              operation.partial ||
+              operation.status == NativeGatewayOperationStatus.timedOut
+        ? AppStatusTone.warning
+        : AppStatusTone.danger;
+    return AppCard(
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: AppStatus(label: label, tone: tone),
+          ),
+          IconButton(
+            tooltip: strings.close,
+            onPressed: onDismiss,
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
+      ),
+    );
   }
 }
 

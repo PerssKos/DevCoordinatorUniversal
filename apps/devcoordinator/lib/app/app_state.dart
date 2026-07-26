@@ -21,6 +21,24 @@ enum AppSection {
 /// it must never authorize a mutation or another data-dependent remote read.
 enum ConnectionAvailability { disconnected, available, stale, unavailable }
 
+enum ConnectionPhase {
+  bootstrapping,
+  disconnected,
+  validatingEndpoint,
+  launchingBrowser,
+  awaitingCallback,
+  exchangingCode,
+  refreshingSession,
+  loadingInventory,
+  connected,
+  stale,
+  offline,
+  authenticationRequired,
+  revoked,
+  incompatible,
+  denied,
+}
+
 /// Semantic outcome of the latest user-visible update operation.
 ///
 /// Keeping this separate from [AppState.updateMessage] prevents translated or
@@ -34,6 +52,16 @@ final class AppState {
     this.availability = ConnectionAvailability.disconnected,
     this.section = AppSection.overview,
     this.inventory,
+    this.nativeInventory,
+    this.nativeMeta,
+    this.nativeSession,
+    this.nativeEvents = const <NativeGatewayEvent>[],
+    this.nativeEventsCursor,
+    this.nativeEventsHasMore = true,
+    this.nativeEventsLoading = false,
+    this.nativeEventsError,
+    this.lastNativeOperation,
+    this.connectionPhase = ConnectionPhase.disconnected,
     this.availableRelease,
     this.lastLease,
     this.lastActionResult,
@@ -58,6 +86,16 @@ final class AppState {
   final ConnectionAvailability availability;
   final AppSection section;
   final CoordinatorInventory? inventory;
+  final NativeGatewayInventory? nativeInventory;
+  final NativeGatewayMeta? nativeMeta;
+  final NativeGatewaySession? nativeSession;
+  final List<NativeGatewayEvent> nativeEvents;
+  final String? nativeEventsCursor;
+  final bool nativeEventsHasMore;
+  final bool nativeEventsLoading;
+  final String? nativeEventsError;
+  final NativeGatewayOperation? lastNativeOperation;
+  final ConnectionPhase connectionPhase;
   final ReleaseInfo? availableRelease;
   final CoordinatorLease? lastLease;
   final CoordinatorActionResult? lastActionResult;
@@ -73,10 +111,14 @@ final class AppState {
   bool get isConnected =>
       availability == ConnectionAvailability.available &&
       settings.connection != null &&
-      inventory != null;
+      (inventory != null || nativeInventory != null);
 
   bool get hasStaleInventory =>
-      availability == ConnectionAvailability.stale && inventory != null;
+      availability == ConnectionAvailability.stale &&
+      (inventory != null || nativeInventory != null);
+
+  bool get isNativeConnection =>
+      settings.connection?.kind == StoredConnectionKind.nativeGatewayV2;
 
   bool get canMutate => isConnected && !refreshing && actionKey == null;
 
@@ -92,6 +134,23 @@ final class AppState {
     AppSection? section,
     CoordinatorInventory? inventory,
     bool clearInventory = false,
+    NativeGatewayInventory? nativeInventory,
+    bool clearNativeInventory = false,
+    NativeGatewayMeta? nativeMeta,
+    bool clearNativeMeta = false,
+    NativeGatewaySession? nativeSession,
+    bool clearNativeSession = false,
+    List<NativeGatewayEvent>? nativeEvents,
+    bool clearNativeEvents = false,
+    String? nativeEventsCursor,
+    bool clearNativeEventsCursor = false,
+    bool? nativeEventsHasMore,
+    bool? nativeEventsLoading,
+    String? nativeEventsError,
+    bool clearNativeEventsError = false,
+    NativeGatewayOperation? lastNativeOperation,
+    bool clearLastNativeOperation = false,
+    ConnectionPhase? connectionPhase,
     ReleaseInfo? availableRelease,
     bool clearAvailableRelease = false,
     CoordinatorLease? lastLease,
@@ -116,6 +175,28 @@ final class AppState {
       availability: availability ?? this.availability,
       section: section ?? this.section,
       inventory: clearInventory ? null : (inventory ?? this.inventory),
+      nativeInventory: clearNativeInventory
+          ? null
+          : (nativeInventory ?? this.nativeInventory),
+      nativeMeta: clearNativeMeta ? null : (nativeMeta ?? this.nativeMeta),
+      nativeSession: clearNativeSession
+          ? null
+          : (nativeSession ?? this.nativeSession),
+      nativeEvents: clearNativeEvents
+          ? const <NativeGatewayEvent>[]
+          : (nativeEvents ?? this.nativeEvents),
+      nativeEventsCursor: clearNativeEventsCursor
+          ? null
+          : (nativeEventsCursor ?? this.nativeEventsCursor),
+      nativeEventsHasMore: nativeEventsHasMore ?? this.nativeEventsHasMore,
+      nativeEventsLoading: nativeEventsLoading ?? this.nativeEventsLoading,
+      nativeEventsError: clearNativeEventsError
+          ? null
+          : (nativeEventsError ?? this.nativeEventsError),
+      lastNativeOperation: clearLastNativeOperation
+          ? null
+          : (lastNativeOperation ?? this.lastNativeOperation),
+      connectionPhase: connectionPhase ?? this.connectionPhase,
       availableRelease: clearAvailableRelease
           ? null
           : (availableRelease ?? this.availableRelease),

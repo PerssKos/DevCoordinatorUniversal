@@ -88,6 +88,14 @@ abstract interface class NativeGatewayV2CoreApi {
 
   Future<NativeGatewayEventPage> readEvents({String? after, int limit = 100});
 
+  Future<NativeGatewayOperation> actOnProject({
+    required String projectId,
+    required NativeGatewayResourceAction action,
+    required NativeGatewayActionRequest request,
+    required NativeGatewayEntityTag ifMatch,
+    required NativeGatewayIdempotencyKey idempotencyKey,
+  });
+
   Future<NativeGatewayOperation> actOnResource({
     required String resourceId,
     required NativeGatewayResourceAction action,
@@ -172,7 +180,7 @@ final class NativeGatewayV2CoreClient implements NativeGatewayV2CoreApi {
       effect: _NativeRequestEffect.readOnly,
     );
     return NativeGatewayDocument(
-      value: _parser.parseMeta(response.json),
+      value: _parser.parseMeta(response.json, gatewayEndpoint: endpoint.uri),
       entityTag: _optionalEntityTag(response),
     );
   }
@@ -236,6 +244,32 @@ final class NativeGatewayV2CoreClient implements NativeGatewayV2CoreApi {
       effect: _NativeRequestEffect.readOnly,
     );
     return _parser.parseEventPage(response.json);
+  }
+
+  @override
+  Future<NativeGatewayOperation> actOnProject({
+    required String projectId,
+    required NativeGatewayResourceAction action,
+    required NativeGatewayActionRequest request,
+    required NativeGatewayEntityTag ifMatch,
+    required NativeGatewayIdempotencyKey idempotencyKey,
+  }) async {
+    final target = _opaqueId(projectId, 'projectId');
+    final response = await _request(
+      method: 'POST',
+      path: '/projects/{projectId}/actions/${action.name}',
+      pathSegments: ['projects', target, 'actions', action.name],
+      headers: _mutationHeaders(ifMatch, idempotencyKey),
+      body: request.toJson(),
+      expectedStatuses: const {202},
+      effect: _NativeRequestEffect.mutation,
+    );
+    return _parseMutationResponse(
+      method: 'POST',
+      path: '/projects/{projectId}/actions/${action.name}',
+      json: response.json,
+      parse: _parser.parseOperation,
+    );
   }
 
   @override
@@ -381,7 +415,14 @@ final class NativeGatewayV2CoreClient implements NativeGatewayV2CoreApi {
       expectedStatuses: const {200},
       effect: _NativeRequestEffect.readOnly,
     );
-    return _parser.parseOperation(response.json);
+    final operation = _parser.parseOperation(response.json);
+    if (operation.id != target) {
+      throw const CoordinatorProtocolException(
+        'Native gateway returned a different operation than the one requested.',
+        path: r'$.id',
+      );
+    }
+    return operation;
   }
 
   Map<String, String> _mutationHeaders(
@@ -453,10 +494,11 @@ final class NativeGatewayV2CoreClient implements NativeGatewayV2CoreApi {
       if (effect == _NativeRequestEffect.mutation &&
           requestStarted &&
           status != null &&
-          status >= 200 &&
-          status < 300 &&
-          (error is CoordinatorProtocolException ||
-              error is CoordinatorBodyTooLargeException)) {
+          ((status >= 500 && status <= 599) ||
+              (status >= 200 &&
+                  status < 300 &&
+                  (error is CoordinatorProtocolException ||
+                      error is CoordinatorBodyTooLargeException)))) {
         throw CoordinatorMutationOutcomeUnknownException(
           method: method,
           path: path,

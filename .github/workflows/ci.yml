@@ -41,7 +41,7 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
       - run: dart format --output=none --set-exit-if-changed .
       - run: flutter analyze
       - run: flutter test packages/coordinator_client
@@ -59,15 +59,23 @@ jobs:
           - name: Android
             os: ubuntu-24.04
             build-arguments: apk --debug
+            upload_smoke: false
           - name: Android release smoke
             os: ubuntu-24.04
             build-arguments: apk --release
+            upload_smoke: false
           - name: macOS
             os: macos-15
             build-arguments: macos --release
+            upload_smoke: true
+            artifact_name: macos-adhoc-smoke
+            artifact_path: source/apps/devcoordinator/build/macos/Build/Products/Release/*.app
           - name: Windows
             os: windows-2025
             build-arguments: windows --release
+            upload_smoke: true
+            artifact_name: windows-self-signed-smoke
+            artifact_path: source/apps/devcoordinator/build/windows/**/*.msix
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
@@ -85,13 +93,28 @@ jobs:
           cache: true
       - name: Resolve workspace
         working-directory: source
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
       - name: Build target
         working-directory: source/apps/devcoordinator
         run: >-
           flutter build ${{ matrix.build-arguments }}
           --dart-define=UPDATE_REPOSITORY=${{ github.repository }}
+      - name: Package Windows protocol activation as MSIX
+        if: matrix.name == 'Windows'
+        working-directory: source/apps/devcoordinator
+        run: >-
+          dart run msix:create
+          --build-windows false
+          --install-certificate false
       - name: Run Android release lint
         if: matrix.name == 'Android release smoke'
         working-directory: source/apps/devcoordinator/android
         run: ./gradlew :app:lintRelease
+      - name: Upload clearly labeled short-lived smoke artifact
+        if: matrix.upload_smoke == true
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7

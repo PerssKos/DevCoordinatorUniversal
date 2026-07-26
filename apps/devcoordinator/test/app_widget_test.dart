@@ -46,23 +46,21 @@ void main() {
           find.byKey(const ValueKey<String>('connection-setup')),
           findsOne,
         );
-        expect(find.text('Remote gateway'), findsOne);
+        expect(find.text('Sign in securely'), findsOne);
+        expect(find.text('https://console.classified.guru/api/v2'), findsOne);
         expect(find.text('Coordinator token'), findsNothing);
-        expect(
-          find.textContaining('Android and off-host clients require'),
-          findsOne,
-        );
+        expect(find.text('Host name'), findsNothing);
+        expect(find.text('Endpoint URL'), findsNothing);
+        expect(find.text('Action attribution'), findsNothing);
+        expect(find.text('Local desktop'), findsNothing);
+        expect(find.byType(TextField), findsNothing);
         expect(tokenStore.readCount, 0);
         expect(factory.attempts, isEmpty);
 
-        final localButton = tester.widget<AppButton>(
-          find.widgetWithText(AppButton, 'Local desktop'),
+        final signInButton = tester.widget<AppButton>(
+          find.widgetWithText(AppButton, 'Sign in securely'),
         );
-        final connectButton = tester.widget<AppButton>(
-          find.widgetWithText(AppButton, 'Connect'),
-        );
-        expect(localButton.onPressed, isNull);
-        expect(connectButton.onPressed, isNull);
+        expect(signInButton.onPressed, isNotNull);
         expect(tester.takeException(), isNull);
       } finally {
         debugDefaultTargetPlatformOverride = null;

@@ -1,11 +1,12 @@
 # Completion Ledger
 
-- Full event history — Connect the typed cursor API to the application adapter,
-  controller, and Events destination instead of relying on the bounded
-  inventory snapshot. Persist only a safe checkpoint, preserve server order,
-  deduplicate page boundaries, expose loading/error/end/retry states, and test
-  refresh plus long histories. Until then the UI must identify events as a
-  recent snapshot rather than durable cursor history.
+- Event-history target acceptance — The typed cursor API is connected through
+  the adapter and controller to a server-ordered paginated Events destination
+  with refresh, error, retry, end, and page-boundary deduplication behavior.
+  Add deterministic controller/widget coverage for multi-page boundary
+  deduplication, refresh failure, retry, and long narrow/wide histories, then
+  exercise the same states against the packaged targets. No event payload or
+  unsafe cursor is persisted.
 - Durable port assignments — Parse the canonical assignment collection into
   typed models and expose it before secondary lease controls, with truthful
   retained/active/conflict states and immutable target labels. Verify parser,
@@ -19,17 +20,14 @@
   transport or challenge) before calling local v1 production-ready. Verify
   wrong listener, listener replacement between preflight and auth, redirects,
   token non-disclosure, and recovery after coordinator restart.
-- Native-v2 core — Server: implement and deploy `/api/v2` HTTPS, Authorization
-  Code + PKCE S256, short-lived user access tokens, rotating/revocable device
-  sessions, per-resource grants, capability discovery, ETags, idempotency,
-  RFC 9457 errors, and durable operations. Consumer: implement native
-  system-browser sign-in, PKCE/deep-link handling, secure refresh-token
-  rotation/revocation, v2 connection composition, minimum-client negotiation,
-  platform redirect declarations, application-state adapters, and
-  scope/grant/action gating. Verify
-  provider/OpenAPI conformance plus Android and off-host desktop auth, denial,
-  expiry, refresh, revocation, idempotent retry, offline recovery, and partial
-  failure. Until then those connection modes remain intentionally blocked.
+- Native-v2 target acceptance — The typed `/api/v2` server and consumer, fixed
+  production gateway, system-browser OAuth + PKCE/deep links, rotating secure
+  device session, capability/scope/grant/action gating, ETags, exact
+  idempotent operations, and production deployment are implemented and
+  deterministically verified. Complete a physical Android owner
+  sign-in/callback/inventory/action/refresh/revocation/offline-recovery journey
+  and packaged off-host macOS and Windows sign-in journeys. Remove this item
+  only after those target-visible paths are evidenced.
 - PostgreSQL protection profile — Server: implement `databases.*` without
   exposing paths/credentials, delegating to the canonical PostgreSQL safety
   workflow and returning immutable checksum, strong restore-test, safety-backup,
@@ -86,24 +84,23 @@
   stopped series, host memory/disk/load, and sampler-error states. Verify real
   sampling, ordering and aggregation, history reset, outage/stale behavior,
   bounded payloads, and screen-reader alternatives.
-- Windows host authority — Design and implement a separately secured canonical
-  Windows service for process, Docker, port, PostgreSQL, and lifecycle
-  authority, or explicitly limit Windows to remote native-v2 operation. The
-  desktop app must not become privileged authority. Verify service identity,
-  ACLs, concurrency, recovery, and exact action routing on Windows.
-- Select the canonical GitHub repository visibility/name and publish it, then
-  set the release source used by production builds. Anonymous GitHub update
-  checks require a public repository; a private repository needs approved user
-  authentication or a backend GitHub App.
+- Publish the selected public repository `PerssKos/DevCoordinatorUniversal`
+  and its first stable GitHub Release, then verify anonymous latest-release
+  discovery and the in-app newer-version prompt against the published asset.
+  The v0.2.0 Android build already embeds that exact release slug; publication
+  is blocked until GitHub CLI/app access is authenticated for the `PerssKos`
+  account.
 - Select the repository and binary distribution license. Until the owner makes
   that policy decision, the repository intentionally has no `LICENSE` file and
   retains the default copyright restrictions; generated package placeholders
   must not be mistaken for an approved open-source license.
-- Configure stable application/store identities and production signing:
-  Android upload/Play signing, Apple Developer ID or Mac App Store signing plus
-  notarization, and Windows trusted MSIX/Store signing. Verify install-over-
-  previous-version and rollback on real target machines.
-- Run signed packaged launch, accessibility, update-channel, loading/empty/
-  populated/long/offline/partial/capability-blocked, and responsive journeys on
-  physical Android, macOS, and Windows systems. Linux analysis and widget tests
-  do not prove target packaging or launch readiness.
+- Configure production distribution identities and signing: Android
+  upload/Play signing, Apple Developer ID or Mac App Store signing plus
+  notarization, and Windows trusted MSIX/Store signing. The current installable
+  Android artifact is debug-signed only. Verify install-over-previous-version
+  and rollback on real target machines.
+- Build and run signed packaged Android, macOS, and Windows artifacts and
+  verify launch, OAuth/deep-link return, accessibility, update-channel,
+  loading/empty/populated/long/offline/partial/capability-blocked, responsive,
+  upgrade, and rollback journeys on real targets. Linux analysis/widget tests
+  and the debug-signed Android APK do not prove target package readiness.

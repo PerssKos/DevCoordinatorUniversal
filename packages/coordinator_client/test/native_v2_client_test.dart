@@ -42,6 +42,12 @@ Map<String, Object?> metaFixture({
   'contractVersion': '2.0',
   'serverVersion': '2.4.1',
   'minimumClientVersion': '0.1.0',
+  'issuer': 'https://gateway.example.test',
+  'authorizationEndpoint': 'https://gateway.example.test/oauth/authorize',
+  'tokenEndpoint': 'https://gateway.example.test/oauth/token',
+  'revocationEndpoint': 'https://gateway.example.test/oauth/revoke',
+  'publicClientId': 'devcoordinator-installed',
+  'pkceMethods': ['S256'],
   'capabilities': capabilities,
 };
 
@@ -91,9 +97,13 @@ Map<String, Object?> inventoryFixture({bool partial = false}) => {
     {
       'id': 'lease-1',
       'projectId': 'project-1',
+      'serverResourceId': 'resource-1',
       'port': 3300,
       'purpose': 'API',
+      'status': 'active',
+      'releasable': true,
       'expiresAt': '2026-07-25T13:00:00Z',
+      'createdAt': '2026-07-25T12:00:00Z',
     },
   ],
   'blockers': <Object?>[],
@@ -102,13 +112,16 @@ Map<String, Object?> inventoryFixture({bool partial = false}) => {
 const operationId = '123e4567-e89b-42d3-a456-426614174000';
 
 Map<String, Object?> operationFixture({
+  String id = operationId,
   String status = 'succeeded',
   bool partial = false,
   bool needsAttention = false,
   String targetStatus = 'succeeded',
+  String targetId = 'resource-1',
+  String targetKind = 'server',
   List<Object?> errors = const [],
 }) => {
-  'id': operationId,
+  'id': id,
   'status': status,
   'partial': partial,
   'needsAttention': needsAttention,
@@ -119,8 +132,8 @@ Map<String, Object?> operationFixture({
   'resultRevision': status == 'succeeded' ? 'revision-43' : null,
   'results': [
     {
-      'targetId': 'resource-1',
-      'targetKind': 'server',
+      'targetId': targetId,
+      'targetKind': targetKind,
       'status': targetStatus,
       'message': 'Completed',
       'evidenceIds': ['event-1'],
@@ -165,6 +178,12 @@ void main() {
         expect(captured.maxRedirects, 0);
         expect(tokenReads, 0);
         expect(document.entityTag?.value, '"meta-1"');
+        expect(
+          document.value.authorizationEndpoint,
+          Uri.parse('https://gateway.example.test/oauth/authorize'),
+        );
+        expect(document.value.publicClientId, 'devcoordinator-installed');
+        expect(document.value.supportsPkceS256, isTrue);
         expect(document.value.capabilities.values, {
           NativeGatewayCapability.inventoryRead,
           NativeGatewayCapability.resourcesAct,
@@ -218,6 +237,50 @@ void main() {
       );
       expect(requests, 0);
     });
+
+    test(
+      'meta rejects OAuth discovery that can escape its HTTPS origin',
+      () async {
+        final invalidMetadata = <Map<String, Object?>>[
+          {...metaFixture(), 'issuer': 'http://gateway.example.test'},
+          {...metaFixture(), 'issuer': 'https://different.example.test'},
+          {
+            ...metaFixture(),
+            'authorizationEndpoint':
+                'https://attacker.example.test/oauth/authorize',
+          },
+          {
+            ...metaFixture(),
+            'tokenEndpoint':
+                'https://gateway.example.test/oauth/token?redirect=elsewhere',
+          },
+          {
+            ...metaFixture(),
+            'revocationEndpoint':
+                'https://user@gateway.example.test/oauth/revoke',
+          },
+          {
+            ...metaFixture(),
+            'pkceMethods': ['plain'],
+          },
+          {
+            ...metaFixture(),
+            'pkceMethods': ['S256', 'S256'],
+          },
+          {...metaFixture(), 'publicClientId': 'unsafe\nclient'},
+        ];
+
+        for (final metadata in invalidMetadata) {
+          final client = makeNativeClient(
+            MockClient((_) async => jsonResponse(metadata)),
+          );
+          await expectLater(
+            client.readMeta(),
+            throwsA(isA<CoordinatorProtocolException>()),
+          );
+        }
+      },
+    );
   });
 
   group('ETag inventory cache contract', () {
@@ -351,6 +414,45 @@ void main() {
   });
 
   group('typed core endpoints and mutation headers', () {
+    test('project action uses the explicit immutable project route', () async {
+      late http.Request captured;
+      final client = makeNativeClient(
+        MockClient((request) async {
+          captured = request;
+          return jsonResponse(
+            operationFixture(targetId: 'project/blue', targetKind: 'project'),
+            status: 202,
+          );
+        }),
+      );
+      final revision = NativeGatewayEntityTag.parse('"revision-42"');
+      final key = NativeGatewayIdempotencyKey.parse(
+        'bbbbbbbb-cccc-4ddd-8eee-ffffffffffff',
+      );
+
+      final operation = await client.actOnProject(
+        projectId: 'project/blue',
+        action: NativeGatewayResourceAction.stop,
+        request: NativeGatewayActionRequest(reason: 'Maintenance'),
+        ifMatch: revision,
+        idempotencyKey: key,
+      );
+
+      expect(
+        captured.url.toString(),
+        'https://gateway.example.test/api/v2/projects/project%2Fblue/actions/stop',
+      );
+      expect(captured.url.pathSegments[3], 'project/blue');
+      expect(captured.headers['if-match'], '"revision-42"');
+      expect(captured.headers['idempotency-key'], key.value);
+      expect(jsonDecode(captured.body), {'reason': 'Maintenance'});
+      expect(operation.isSuccessful, isTrue);
+      expect(
+        operation.results.single.targetKind,
+        NativeGatewayOperationTargetKind.project,
+      );
+    });
+
     test('resource action binds exact target, revision, and UUID', () async {
       late http.Request captured;
       final client = makeNativeClient(
@@ -400,9 +502,13 @@ void main() {
               return jsonResponse({
                 'id': 'lease/one',
                 'projectId': 'project-1',
+                'serverResourceId': 'resource-1',
                 'port': 3350,
                 'purpose': 'preview',
+                'status': 'active',
+                'releasable': true,
                 'expiresAt': '2026-07-25T13:00:00Z',
+                'createdAt': '2026-07-25T12:00:00Z',
               }, status: 201);
             }
             return http.Response('', 204);
@@ -419,6 +525,9 @@ void main() {
         final lease = await client.createPortLease(
           request: NativeGatewayLeaseRequest(
             projectId: 'project-1',
+            serverResourceId: 'resource-1',
+            firstPort: 3300,
+            lastPort: 3399,
             purpose: 'preview',
             preferredPort: 3350,
             ttlSeconds: 1800,
@@ -435,6 +544,18 @@ void main() {
         expect(requests[0].method, 'POST');
         expect(requests[0].url.path, '/api/v2/ports/leases');
         expect(requests[0].headers['if-match'], '"revision-42"');
+        expect(jsonDecode(requests[0].body), {
+          'projectId': 'project-1',
+          'serverResourceId': 'resource-1',
+          'firstPort': 3300,
+          'lastPort': 3399,
+          'purpose': 'preview',
+          'preferredPort': 3350,
+          'ttlSeconds': 1800,
+        });
+        expect(lease.serverResourceId, 'resource-1');
+        expect(lease.status, NativeGatewayPortLeaseStatus.active);
+        expect(lease.releasable, isTrue);
         expect(requests[1].method, 'DELETE');
         expect(
           requests[1].url.toString(),
@@ -565,9 +686,99 @@ void main() {
         expect(requests[3].url.path, '/api/v2/session');
       },
     );
+
+    test(
+      'operation polling rejects a response for another operation',
+      () async {
+        const otherOperationId = '223e4567-e89b-42d3-a456-426614174000';
+        final client = makeNativeClient(
+          MockClient(
+            (_) async => jsonResponse(operationFixture(id: otherOperationId)),
+          ),
+        );
+
+        await expectLater(
+          client.readOperation(operationId),
+          throwsA(
+            isA<CoordinatorProtocolException>().having(
+              (error) => error.path,
+              'path',
+              r'$.id',
+            ),
+          ),
+        );
+      },
+    );
   });
 
   group('unknown mutation outcomes', () {
+    for (final status in const <int>[500, 502, 503, 504]) {
+      test(
+        'a dispatched mutation HTTP $status response is inconclusive',
+        () async {
+          final client = makeNativeClient(
+            MockClient(
+              (_) async => jsonResponse(<String, Object?>{
+                'error': 'proxy failure',
+              }, status: status),
+            ),
+          );
+
+          await expectLater(
+            client.releasePortLease(
+              leaseId: 'lease-1',
+              ifMatch: NativeGatewayEntityTag.parse('"revision-42"'),
+              idempotencyKey: NativeGatewayIdempotencyKey.parse(
+                'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+              ),
+            ),
+            throwsA(
+              isA<CoordinatorMutationOutcomeUnknownException>()
+                  .having((error) => error.method, 'method', 'DELETE')
+                  .having(
+                    (error) => error.path,
+                    'path',
+                    '/ports/leases/{leaseId}',
+                  ),
+            ),
+          );
+        },
+      );
+    }
+
+    test(
+      'a dispatched mutation RFC problem 5xx is still inconclusive',
+      () async {
+        final client = makeNativeClient(
+          MockClient(
+            (_) async => jsonResponse(
+              <String, Object?>{
+                'type': 'https://gateway.example.test/problems/upstream',
+                'title': 'Upstream unavailable',
+                'status': 503,
+                'code': 'upstream_unavailable',
+              },
+              status: 503,
+              contentType: 'application/problem+json',
+            ),
+          ),
+        );
+
+        await expectLater(
+          client.actOnResource(
+            resourceId: 'resource-1',
+            action: NativeGatewayResourceAction.stop,
+            request: NativeGatewayActionRequest(reason: 'maintenance'),
+            ifMatch: NativeGatewayEntityTag.parse('"revision-42"'),
+            idempotencyKey: NativeGatewayIdempotencyKey.parse(
+              'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            ),
+          ),
+          throwsA(isA<CoordinatorMutationOutcomeUnknownException>()),
+        );
+      },
+    );
+
     test('a dispatched mutation timeout is explicitly inconclusive', () async {
       const privateReason = 'private mutation body';
       final client = makeNativeClient(
@@ -676,6 +887,9 @@ void main() {
         client.createPortLease(
           request: NativeGatewayLeaseRequest(
             projectId: 'project-1',
+            serverResourceId: 'resource-1',
+            firstPort: 3300,
+            lastPort: 3399,
             purpose: 'preview',
           ),
           ifMatch: NativeGatewayEntityTag.parse('"revision-42"'),
@@ -778,12 +992,16 @@ void main() {
       const parser = NativeGatewayV2Parser();
 
       expect(
-        () => parser.parseMeta({...metaFixture(), 'unexpected': true}),
+        () => parser.parseMeta({
+          ...metaFixture(),
+          'unexpected': true,
+        }, gatewayEndpoint: Uri.parse('https://gateway.example.test/api/v2')),
         throwsA(isA<CoordinatorProtocolException>()),
       );
       expect(
         () => parser.parseMeta(
           metaFixture(capabilities: const ['inventory.read', 'inventory.read']),
+          gatewayEndpoint: Uri.parse('https://gateway.example.test/api/v2'),
         ),
         throwsA(isA<CoordinatorProtocolException>()),
       );
@@ -822,6 +1040,62 @@ void main() {
       expect(partial.isSuccessful, isFalse);
     });
 
+    test('port lease parser supports retained history and rejects drift', () {
+      const parser = NativeGatewayV2Parser();
+      final retained = parser.parsePortLease({
+        'id': 'lease-legacy',
+        'projectId': 'project-1',
+        'port': 3300,
+        'purpose': 'legacy',
+        'status': 'released',
+        'releasable': false,
+        'serverResourceId': null,
+        'expiresAt': null,
+        'createdAt': null,
+      });
+
+      expect(retained.serverResourceId, isNull);
+      expect(retained.expiresAt, isNull);
+      expect(retained.createdAt, isNull);
+      expect(retained.status, NativeGatewayPortLeaseStatus.released);
+      expect(retained.releasable, isFalse);
+
+      expect(
+        () => parser.parsePortLease({
+          'id': 'lease-invalid',
+          'projectId': 'project-1',
+          'port': 3300,
+          'purpose': 'legacy',
+          'status': 'future',
+          'releasable': false,
+        }),
+        throwsA(isA<CoordinatorProtocolException>()),
+      );
+      expect(
+        () => parser.parsePortLease({
+          'id': 'lease-invalid',
+          'projectId': 'project-1',
+          'port': 3300,
+          'purpose': 'legacy',
+          'status': 'released',
+          'releasable': true,
+        }),
+        throwsA(isA<CoordinatorProtocolException>()),
+      );
+      expect(
+        () => parser.parsePortLease({
+          'id': 'lease-invalid',
+          'projectId': 'project-1',
+          'port': 3300,
+          'purpose': 'legacy',
+          'status': 'released',
+          'releasable': false,
+          'unexpected': true,
+        }),
+        throwsA(isA<CoordinatorProtocolException>()),
+      );
+    });
+
     test(
       'rejects unsafe revisions, UUIDs, fields, and request sizes',
       () async {
@@ -848,8 +1122,32 @@ void main() {
         expect(
           () => NativeGatewayLeaseRequest(
             projectId: 'project-1',
+            serverResourceId: 'resource-1',
+            firstPort: 3300,
+            lastPort: 3399,
             purpose: 'preview',
             ttlSeconds: 59,
+          ),
+          throwsArgumentError,
+        );
+        expect(
+          () => NativeGatewayLeaseRequest(
+            projectId: 'project-1',
+            serverResourceId: 'resource-1',
+            firstPort: 3400,
+            lastPort: 3300,
+            purpose: 'preview',
+          ),
+          throwsArgumentError,
+        );
+        expect(
+          () => NativeGatewayLeaseRequest(
+            projectId: 'project-1',
+            serverResourceId: 'resource-1',
+            firstPort: 3300,
+            lastPort: 3399,
+            purpose: 'preview',
+            preferredPort: 3400,
           ),
           throwsArgumentError,
         );

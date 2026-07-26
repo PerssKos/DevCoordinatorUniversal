@@ -51,8 +51,107 @@ abstract interface class AppCoordinatorService {
 abstract interface class AppCoordinatorServiceFactory {
   Future<AppCoordinatorService> connect({
     required StoredConnectionProfile profile,
-    required String credential,
+    String? credential,
+    bool interactive = false,
+    void Function(CoordinatorConnectionProgress progress)? onProgress,
   });
+}
+
+enum CoordinatorConnectionProgress {
+  validatingEndpoint,
+  refreshingSession,
+  launchingBrowser,
+  awaitingCallback,
+  exchangingCode,
+}
+
+abstract interface class NativeStoredSessionRevoker {
+  /// Revokes a securely stored native session when no live adapter exists.
+  ///
+  /// Failure must retain a potentially live refresh credential so revocation
+  /// can be retried. Once its revocation-pending fence is durably stored, that
+  /// credential is eligible only for retry and never for reconnect.
+  Future<void> revokeStoredNativeSession(StoredConnectionProfile profile);
+}
+
+final class NativeActionGate {
+  const NativeActionGate.allowed() : allowed = true, reason = null;
+
+  const NativeActionGate.blocked(this.reason) : allowed = false;
+
+  final bool allowed;
+  final String? reason;
+}
+
+/// Native-v2 application adapter that preserves immutable gateway identities.
+///
+/// It deliberately exposes native DTOs rather than filling legacy path,
+/// launch-argument, or Docker-ID fields with invented values.
+abstract interface class NativeAppCoordinatorService
+    implements AppCoordinatorService {
+  NativeGatewayMeta get nativeMeta;
+
+  NativeGatewaySession get nativeSession;
+
+  NativeGatewayInventory? get currentNativeInventory;
+
+  NativeGatewayEntityTag? get currentNativeEntityTag;
+
+  Future<NativeGatewayInventory> loadNativeInventory();
+
+  NativeActionGate canActOnNativeProject(
+    NativeGatewayProject project,
+    NativeGatewayResourceAction action,
+  );
+
+  NativeActionGate canActOnNativeResource(
+    NativeGatewayResource resource,
+    NativeGatewayResourceAction action,
+  );
+
+  NativeActionGate canReadNativeLogs(NativeGatewayResource resource);
+
+  NativeActionGate canManageNativeLease({
+    required String projectId,
+    String? leaseId,
+  });
+
+  Future<NativeGatewayOperation> actOnNativeProject(
+    NativeGatewayProject project,
+    NativeGatewayResourceAction action, {
+    String? reason,
+  });
+
+  Future<NativeGatewayOperation> actOnNativeResource(
+    NativeGatewayResource resource,
+    NativeGatewayResourceAction action, {
+    String? reason,
+  });
+
+  Future<NativeGatewayLogPage> readNativeLogs(
+    NativeGatewayResource resource, {
+    String? cursor,
+    int limit = 200,
+  });
+
+  Future<NativeGatewayPortLease> leaseNativePort({
+    required NativeGatewayProject project,
+    required NativeGatewayResource server,
+    required int firstPort,
+    required int lastPort,
+    required String purpose,
+    int? preferredPort,
+    Duration? ttl,
+  });
+
+  Future<void> releaseNativePort(NativeGatewayPortLease lease);
+
+  Future<NativeGatewayEventPage> loadNativeEvents({
+    String? after,
+    int limit = 100,
+  });
+
+  Future<void> revokeNativeSession();
 }
 
 final class AppUpdateResult {

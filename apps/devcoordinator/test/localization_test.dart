@@ -35,13 +35,12 @@ void main() {
       await tester.pumpWidget(DevCoordinatorApp(controller: controller));
       await tester.pumpAndSettle();
 
-      expect(find.text('Подключение'), findsOne);
-      expect(find.text('Удалённый шлюз'), findsOne);
+      expect(find.text('Войдите в аккаунт DevCoordinator'), findsOne);
       expect(
-        find.textContaining('Android и удалённые клиенты требуют'),
+        find.textContaining('Личность подтверждается в системном браузере'),
         findsOne,
       );
-      expect(find.text('Подключиться'), findsOne);
+      expect(find.text('Безопасный вход'), findsOne);
       expect(tester.takeException(), isNull);
     } finally {
       debugDefaultTargetPlatformOverride = null;

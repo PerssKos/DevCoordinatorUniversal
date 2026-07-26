@@ -6,6 +6,8 @@ Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-26
+
 ### Added
 
 - Flutter workspace and installed Android, macOS, and Windows runners.
@@ -21,6 +23,13 @@ Versioning.
 - Independently testable Native Gateway v2 core client with typed DTOs,
   HTTPS-only requests, strong ETags, idempotency keys, RFC 9457 failures,
   bounded payloads, and durable-operation semantics.
+- Fixed production connection to `https://console.classified.guru/api/v2`
+  with one-action system-browser OAuth Authorization Code + PKCE sign-in,
+  platform deep-link callbacks, rotating secure device sessions, and no
+  hostname, coordinator-token, or local-desktop prompt on Android.
+- Native collection screens for authorized projects, servers, containers,
+  recent events, logs, and port leases with server-advertised capability,
+  scope, grant, action, and blocker gating.
 
 ### Security
 
@@ -41,6 +50,12 @@ Versioning.
   an exactly owned enrolled server from the current inventory.
 - Android excludes application data and secure-storage metadata from cloud,
   legacy, and device-to-device backup paths.
+- Android direct-distribution releases use a dedicated stable signing
+  certificate so future APK updates can retain one package identity.
+- The Android OAuth callback declares an exact authority and path in the
+  merged APK; release lint and artifact validation reject broader handlers.
+- Stable releases are staged as drafts, downloaded, and revalidated before
+  publication; Android debug APKs are never distributed.
 - The host-wide legacy bearer is never persisted by current builds. A cold
   process cannot recover the old durable key, even when marker, profile, and
   key deletion all failed during disconnect.

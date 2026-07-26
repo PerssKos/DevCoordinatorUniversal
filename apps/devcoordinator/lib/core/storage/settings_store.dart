@@ -113,7 +113,8 @@ abstract interface class AppSettingsStore {
 
   Future<void> write(PersistedAppSettings settings);
 
-  /// Persists the fail-closed cleanup gate independently of the connection.
+  /// Persists the fail-closed credential cleanup or revocation gate
+  /// independently of the connection profile.
   Future<void> setCredentialCleanupPending(bool pending);
 }
 

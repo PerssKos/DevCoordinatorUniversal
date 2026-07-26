@@ -6,9 +6,10 @@ These rules apply to the whole repository.
 
 - This repository owns only the cross-platform client, its design system,
   typed client contracts, tests, and release automation.
-- `/home/Coordinator/DevCoordinator` remains the canonical owner of the host
-  broker, normalized coordinator store, process and Docker lifecycle logic,
-  PostgreSQL safety logic, Console access policy, and server-side routes.
+- The separate canonical DevCoordinator server repository remains the owner of
+  the host broker, normalized coordinator store, process and Docker lifecycle
+  logic, PostgreSQL safety logic, Console access policy, and server-side
+  routes.
 - Never copy the coordinator database schema, private token files, access
   policy, or privileged lifecycle implementation into this repository.
 - The legacy coordinator HTTP API is loopback-only. Permit it only as an

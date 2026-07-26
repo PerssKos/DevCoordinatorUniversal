@@ -2,9 +2,13 @@ import 'package:devcoordinator_design/devcoordinator_design.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/app_controller.dart';
+import '../../app/app_state.dart';
+import '../../core/coordinator/native_gateway_policy.dart';
 import '../../core/localization/app_strings.dart';
 import '../../core/platform/platform_support.dart';
 import '../../core/storage/settings_store.dart';
+
+const defaultNativeGatewayUrl = canonicalProductionNativeGatewayUrl;
 
 final class ConnectionSetupScreen extends StatefulWidget {
   const ConnectionSetupScreen({required this.controller, super.key});
@@ -41,7 +45,7 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
           saved?.baseUrl ??
           (_kind == StoredConnectionKind.localLegacyV1
               ? 'http://127.0.0.1:29876'
-              : 'https://'),
+              : defaultNativeGatewayUrl),
     );
     _agentController = TextEditingController(
       text: saved?.agent ?? 'devcoordinator-app',
@@ -64,6 +68,12 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
     final tokens = context.appTokens;
     final state = widget.controller.state;
     final local = _kind == StoredConnectionKind.localLegacyV1;
+    final revocationPending =
+        state.connectionPhase == ConnectionPhase.revoked &&
+        state.settings.connection?.kind == StoredConnectionKind.nativeGatewayV2;
+    if (!PlatformSupport.supportsLegacyLocalConnection) {
+      return _buildNativeOnly(context, strings, tokens);
+    }
 
     return ListView(
       key: const ValueKey<String>('connection-setup'),
@@ -159,7 +169,7 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
                         : AppButtonVariant.primary,
                     onPressed: () => _selectKind(
                       StoredConnectionKind.nativeGatewayV2,
-                      'https://',
+                      defaultNativeGatewayUrl,
                     ),
                   ),
                 ],
@@ -253,8 +263,8 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
                 SizedBox(height: tokens.spaceLg),
                 Text(
                   strings.text(
-                    en: 'The current DevCoordinator server does not yet expose native OAuth/PKCE. This client refuses to copy its host-wide loopback token to a phone.',
-                    ru: 'Текущий сервер DevCoordinator ещё не предоставляет нативную OAuth/PKCE-авторизацию. Клиент не будет копировать общий loopback-токен хоста на телефон.',
+                    en: 'Sign-in opens in the system browser and returns through the protected app callback. No host-wide token is requested.',
+                    ru: 'Вход откроется в системном браузере и вернётся через защищённый callback приложения. Общий токен хоста не требуется.',
                   ),
                   style: Theme.of(
                     context,
@@ -270,14 +280,26 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
               ],
               SizedBox(height: tokens.spaceLg),
               AppButton(
-                label: state.busy ? strings.loading : strings.connect,
+                label: state.busy
+                    ? strings.loading
+                    : revocationPending
+                    ? strings.text(
+                        en: 'Retry secure sign-out',
+                        ru: 'Повторить безопасный выход',
+                      )
+                    : local
+                    ? strings.connect
+                    : strings.text(
+                        en: 'Sign in securely',
+                        ru: 'Безопасный вход',
+                      ),
                 loading: state.busy,
                 expand: true,
                 onPressed:
-                    local &&
-                        !state.busy &&
-                        !state.settings.credentialCleanupPending
-                    ? _connect
+                    !state.busy && !state.settings.credentialCleanupPending
+                    ? revocationPending
+                          ? widget.controller.disconnect
+                          : _connect
                     : null,
               ),
             ],
@@ -285,6 +307,141 @@ final class _ConnectionSetupScreenState extends State<ConnectionSetupScreen> {
         ),
         SizedBox(height: tokens.spaceXl),
       ],
+    );
+  }
+
+  Widget _buildNativeOnly(
+    BuildContext context,
+    AppStrings strings,
+    AppThemeTokens tokens,
+  ) {
+    final state = widget.controller.state;
+    final revocationPending =
+        state.connectionPhase == ConnectionPhase.revoked &&
+        state.settings.connection?.kind == StoredConnectionKind.nativeGatewayV2;
+    final phaseLabel = switch (state.connectionPhase) {
+      ConnectionPhase.launchingBrowser => strings.text(
+        en: 'Opening the system browser…',
+        ru: 'Открывается системный браузер…',
+      ),
+      ConnectionPhase.awaitingCallback => strings.text(
+        en: 'Complete sign-in in your browser…',
+        ru: 'Завершите вход в браузере…',
+      ),
+      ConnectionPhase.exchangingCode => strings.text(
+        en: 'Completing secure sign-in…',
+        ru: 'Завершается безопасный вход…',
+      ),
+      ConnectionPhase.refreshingSession => strings.text(
+        en: 'Restoring the secure session…',
+        ru: 'Восстанавливается защищённый сеанс…',
+      ),
+      ConnectionPhase.loadingInventory => strings.text(
+        en: 'Loading your authorized resources…',
+        ru: 'Загружаются доступные вам ресурсы…',
+      ),
+      _ => strings.text(
+        en: 'Sign in with your DevCoordinator account',
+        ru: 'Войдите в аккаунт DevCoordinator',
+      ),
+    };
+    return ListView(
+      key: const ValueKey<String>('connection-setup'),
+      children: <Widget>[
+        const SizedBox(height: 28),
+        Text(
+          strings.appName,
+          style: Theme.of(
+            context,
+          ).textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800),
+        ),
+        SizedBox(height: tokens.spaceSm),
+        Text(
+          strings.text(
+            en: 'Projects, services, containers, ports, and events — with the permissions granted to your account.',
+            ru: 'Проекты, сервисы, контейнеры, порты и события — в рамках прав вашего аккаунта.',
+          ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(color: tokens.textSecondary),
+        ),
+        SizedBox(height: tokens.spaceXl),
+        AppCard(
+          raised: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Icon(
+                Icons.verified_user_outlined,
+                size: 42,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              SizedBox(height: tokens.spaceMd),
+              Text(
+                phaseLabel,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              SizedBox(height: tokens.spaceSm),
+              Text(
+                strings.text(
+                  en: 'The system browser verifies your identity. The app stores only a rotating refresh credential in protected platform storage.',
+                  ru: 'Личность подтверждается в системном браузере. Приложение хранит только обновляемый ключ сеанса в защищённом хранилище устройства.',
+                ),
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: tokens.textSecondary),
+              ),
+              SizedBox(height: tokens.spaceMd),
+              AppStatus(
+                label: defaultNativeGatewayUrl,
+                tone: AppStatusTone.info,
+              ),
+              if (state.connectionError != null) ...<Widget>[
+                SizedBox(height: tokens.spaceMd),
+                AppStatus(
+                  label: state.connectionError!,
+                  tone: AppStatusTone.danger,
+                ),
+              ],
+              SizedBox(height: tokens.spaceLg),
+              AppButton(
+                key: const ValueKey<String>('native-browser-sign-in'),
+                label: state.busy
+                    ? strings.loading
+                    : revocationPending
+                    ? strings.text(
+                        en: 'Retry secure sign-out',
+                        ru: 'Повторить безопасный выход',
+                      )
+                    : strings.text(
+                        en: 'Sign in securely',
+                        ru: 'Безопасный вход',
+                      ),
+                loading: state.busy,
+                expand: true,
+                onPressed: state.busy
+                    ? null
+                    : revocationPending
+                    ? widget.controller.disconnect
+                    : _connectNativeDefault,
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: tokens.spaceXl),
+      ],
+    );
+  }
+
+  Future<void> _connectNativeDefault() {
+    return widget.controller.connect(
+      profile: const StoredConnectionProfile(
+        kind: StoredConnectionKind.nativeGatewayV2,
+        baseUrl: defaultNativeGatewayUrl,
+        label: 'DevCoordinator',
+      ),
     );
   }
 

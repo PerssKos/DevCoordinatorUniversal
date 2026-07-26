@@ -23,14 +23,17 @@ allowed actions, blockers, and lifecycle plans.
 
 ## Delivery truth
 
-The implemented client can use the loopback legacy contract only on the same
-macOS host. Android, Windows, off-host desktop, and every native-v2-only family
-below remain unavailable until both sides of the contract exist:
+The implemented native-v2 core connects Android, Windows, and off-host macOS
+to the fixed production HTTPS gateway with system-browser OAuth Authorization
+Code + PKCE, rotating device sessions, typed inventory/events/logs, exact
+resource actions, and port-lease controls. The loopback legacy contract remains
+an explicitly labeled macOS-only preview for a verified same-host connection;
+it is never a mobile or Windows credential path.
 
-1. DevCoordinator/DevOpsConsole implements and deploys the server-owned
-   profile with user-scoped authentication and contract tests.
-2. This repository implements the typed consumer, states, actions, and
-   end-to-end tests.
+Optional capability families below remain unavailable until both the
+server-owned profile and its typed consumer journey are implemented, advertised
+and verified end to end. The client hides or disables a family whose exact
+capability is absent.
 
 An OpenAPI path marked `x-implementation-status: deferred` is a conditional
 interface definition, not evidence that either side is working.
@@ -49,8 +52,9 @@ The first release shell reserves stable destinations for:
 5. Ports — the active/retained lease snapshot, expiry, exact release, and
    creation against an enrolled server. Durable port-assignment browsing
    remains unresolved in the completion ledger.
-6. Events — the bounded recent inventory snapshot. Full durable cursor history
-   remains unresolved in the completion ledger.
+6. Events — server-ordered paginated history with refresh, retry, explicit end,
+   and safe boundary deduplication. Final long-history and target-visible
+   acceptance remains in the completion ledger.
 7. Settings — connection/security status, visual style, brightness, update
    channel, version, and diagnostics.
 

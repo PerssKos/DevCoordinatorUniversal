@@ -1,7 +1,7 @@
 name: devcoordinator
 description: "Universal DevCoordinator client for Android, macOS, and Windows."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.12.2
@@ -9,6 +9,8 @@ environment:
 resolution: workspace
 
 dependencies:
+  app_links: ^7.2.1
+  crypto: ^3.0.7
   flutter:
     sdk: flutter
   flutter_localizations:
@@ -28,6 +30,12 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  msix: ^3.18.0
 
 flutter:
   uses-material-design: true
+
+msix_config:
+  display_name: DevCoordinator
+  msix_version: 0.2.0.2
+  protocol_activation: io.github.holyglory.devcoordinator

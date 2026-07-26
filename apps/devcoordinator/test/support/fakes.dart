@@ -46,6 +46,7 @@ final class FakeSettingsStore implements AppSettingsStore {
 
   @override
   Future<void> setCredentialCleanupPending(bool pending) async {
+    events?.add('settings.cleanupMarker.$pending');
     final error = queuedCleanupMarkerErrors.isEmpty
         ? cleanupMarkerError
         : queuedCleanupMarkerErrors.removeAt(0);
@@ -123,10 +124,15 @@ final class FakeTokenStore implements SecureTokenStore {
 }
 
 final class ConnectionAttempt {
-  const ConnectionAttempt({required this.profile, required this.credential});
+  const ConnectionAttempt({
+    required this.profile,
+    required this.credential,
+    required this.interactive,
+  });
 
   final StoredConnectionProfile profile;
-  final String credential;
+  final String? credential;
+  final bool interactive;
 }
 
 final class FakeCoordinatorServiceFactory
@@ -141,10 +147,18 @@ final class FakeCoordinatorServiceFactory
   @override
   Future<AppCoordinatorService> connect({
     required StoredConnectionProfile profile,
-    required String credential,
+    String? credential,
+    bool interactive = false,
+    void Function(CoordinatorConnectionProgress progress)? onProgress,
   }) async {
     events?.add('factory.connect');
-    attempts.add(ConnectionAttempt(profile: profile, credential: credential));
+    attempts.add(
+      ConnectionAttempt(
+        profile: profile,
+        credential: credential,
+        interactive: interactive,
+      ),
+    );
     final error = connectError;
     if (error != null) throw error;
     return service;

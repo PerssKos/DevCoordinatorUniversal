@@ -19,5 +19,54 @@
    session-only legacy credential behavior, future channel-specific secure
    credentials, connection state, and rollback/recovery behavior.
 
-CI build outputs are ephemeral diagnostics and are not uploaded. They must
-never be relabeled as signed production packages.
+CI compiles Android debug and unsigned-release smokes but never uploads them,
+because a debug package must not compete for the production OAuth callback.
+It retains clearly labeled ad-hoc macOS and self-signed Windows target-smoke
+artifacts for seven days. They are diagnostics, not production installers,
+and must never be attached to or relabeled as a stable signed release.
+
+## Direct Android release
+
+`tool/build_android_release.sh` is the canonical direct-APK builder. It refuses
+to produce a release unless Git is clean, locked dependencies resolve, Android
+release lint passes, private inputs are owner-only and outside the repository,
+the v2/v3 signature verifies, and the signer is the exact certificate recorded
+in `DCU-2026-07-26-08`. It builds from a temporary archive of the committed
+source, strips source diagnostics into a private symbol archive, and checks the
+production package, monotonically increasing Android build number, exact
+merged OAuth callback, fixed gateway, canonical update repository, and absence
+of private build-workspace URIs before writing the APK and checksum under
+`apps/devcoordinator/build/release/`.
+
+Supply these values only from a private release environment:
+
+```bash
+export ANDROID_RELEASE_KEYSTORE=/private/path/devcoordinator-direct.p12
+export ANDROID_RELEASE_STORE_PASSWORD_FILE=/private/path/store-password
+export ANDROID_RELEASE_KEY_PASSWORD_FILE=/private/path/key-password
+export ANDROID_RELEASE_KEY_ALIAS=devcoordinator-direct
+export ANDROID_SDK_ROOT=/path/to/android-sdk
+export FLUTTER_BIN=/path/to/flutter
+tool/build_android_release.sh
+```
+
+The keystore and password files must never enter Git, workflow logs, build
+artifacts, or a GitHub Release. Preserve an offline owner-controlled backup:
+losing the key prevents updates to direct installations, while replacing it
+requires uninstalling the existing package.
+
+If an earlier `io.github.holyglory.devcoordinator.debug` test package is
+installed, remove it once before installing the production APK. Debug APKs are
+not distributed because a second package registered for the production
+callback makes Android callback selection ambiguous.
+
+The `android-production` GitHub Environment must contain
+`ANDROID_RELEASE_KEYSTORE_BASE64`, `ANDROID_RELEASE_STORE_PASSWORD`, and
+`ANDROID_RELEASE_KEY_PASSWORD`, and should require an owner approval. Pushing
+an exact `v<SemVer>` tag whose commit is contained in `main` runs the same
+source and contract gates and invokes the canonical builder. The workflow
+uploads only the signed APK plus checksum to a draft, downloads both again,
+revalidates checksum/signature/package/merged callback/content, publishes the
+verified draft, and finally verifies that the anonymous latest-release API
+returns the new stable tag. A rerun safely reuses a draft or revalidates an
+already published release.

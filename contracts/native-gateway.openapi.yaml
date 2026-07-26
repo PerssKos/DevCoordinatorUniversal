@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: DevCoordinator Native Gateway
-  version: 0.2.0
+  version: 0.3.0
   summary: User-scoped remote contract for installed DevCoordinator clients.
   description: |
     This contract is intentionally separate from the loopback-only coordinator
@@ -9,15 +9,17 @@ info:
     every immutable resource, and delegate host mutations to the canonical
     DevCoordinator authority.
 
-    The base inventory, event, log, port, resource-action, lifecycle, and
-    operation paths are required by a complete v2 gateway. Paths marked with
-    `x-devcoordinator-capability` are optional capability profiles. Their
-    presence in this document defines the DTO and safety contract only; it does
-    not claim that the current server or client implements them. A client may
-    call or reveal one only when `/meta` advertises the exact capability and
-    `/session` supplies the required scope/grant. Unknown capability strings
-    must be ignored safely.
-x-implementation-status: proposed
+    The base inventory, event, log, port, project-action, resource-action, and
+    operation paths are required by a complete v2 gateway. Lifecycle remains
+    an optional capability profile until the canonical authority can plan and
+    apply archive, purge, and restore through one durable reviewed contract.
+    Paths marked with `x-devcoordinator-capability` are optional capability
+    profiles. Their presence in this document defines the DTO and safety
+    contract only; it does not claim that the current server or client
+    implements them. A client may call or reveal one only when `/meta`
+    advertises the exact capability and `/session` supplies the required
+    scope/grant. Unknown capability strings must be ignored safely.
+x-implementation-status: implementation-in-progress
 x-canonical-authority: DevCoordinator
 servers:
   - url: https://{host}/api/v2
@@ -105,6 +107,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventPage'
+        default:
+          $ref: '#/components/responses/Problem'
+  /projects/{projectId}/actions/{action}:
+    post:
+      operationId: actOnProject
+      security:
+        - oauth2:
+            - resources:act
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: action
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/ResourceAction'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActionRequest'
+      responses:
+        '202':
+          description: Project action accepted by the canonical authority.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
         default:
           $ref: '#/components/responses/Problem'
   /resources/{resourceId}/actions/{action}:
@@ -211,6 +243,8 @@ paths:
   /lifecycle/plans:
     post:
       operationId: createLifecyclePlan
+      x-devcoordinator-capability: lifecycle.manage
+      x-implementation-status: deferred
       security:
         - oauth2:
             - lifecycle:manage
@@ -235,6 +269,8 @@ paths:
   /lifecycle/plans/{planId}/apply:
     post:
       operationId: applyLifecyclePlan
+      x-devcoordinator-capability: lifecycle.manage
+      x-implementation-status: deferred
       security:
         - oauth2:
             - lifecycle:manage
@@ -1091,6 +1127,14 @@ components:
       schema:
         type: string
   parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
     ResourceId:
       name: resourceId
       in: path
@@ -1190,6 +1234,12 @@ components:
         - contractVersion
         - serverVersion
         - minimumClientVersion
+        - issuer
+        - authorizationEndpoint
+        - tokenEndpoint
+        - revocationEndpoint
+        - publicClientId
+        - pkceMethods
         - capabilities
       properties:
         contractVersion:
@@ -1201,6 +1251,37 @@ components:
         minimumClientVersion:
           type: string
           pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+        issuer:
+          type: string
+          format: uri
+          pattern: '^https://'
+          description: |
+            HTTPS issuer origin for this gateway. It must have the same origin
+            as the gateway URL and every advertised OAuth endpoint.
+        authorizationEndpoint:
+          type: string
+          format: uri
+          pattern: '^https://'
+        tokenEndpoint:
+          type: string
+          format: uri
+          pattern: '^https://'
+        revocationEndpoint:
+          type: string
+          format: uri
+          pattern: '^https://'
+        publicClientId:
+          type: string
+          minLength: 1
+          maxLength: 256
+        pkceMethods:
+          type: array
+          minItems: 1
+          maxItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            const: S256
         capabilities:
           type: array
           uniqueItems: true
@@ -1440,10 +1521,31 @@ components:
       additionalProperties: false
       required:
         - projectId
+        - serverResourceId
+        - firstPort
+        - lastPort
         - purpose
       properties:
         projectId:
           type: string
+          minLength: 1
+          maxLength: 256
+        serverResourceId:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Enrolled immutable server identity. Native clients cannot create
+            an unattached manual lease.
+        firstPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        lastPort:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          description: Must be greater than or equal to firstPort.
         purpose:
           type: string
           minLength: 1
@@ -1466,20 +1568,43 @@ components:
         - projectId
         - port
         - purpose
-        - expiresAt
+        - status
+        - releasable
       properties:
         id:
           type: string
         projectId:
           type: string
+        serverResourceId:
+          type:
+            - string
+            - 'null'
+          description: |
+            Enrolled immutable server identity, or null for retained legacy
+            lease history created before that binding was required.
         port:
           type: integer
           minimum: 1
           maximum: 65535
         purpose:
           type: string
-        expiresAt:
+        status:
           type: string
+          enum:
+            - active
+            - released
+            - stale
+        releasable:
+          type: boolean
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        createdAt:
+          type:
+            - string
+            - 'null'
           format: date-time
     LifecyclePlanRequest:
       type: object

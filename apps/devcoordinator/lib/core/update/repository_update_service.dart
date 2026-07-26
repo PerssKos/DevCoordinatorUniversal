@@ -61,7 +61,8 @@ final class RepositoryAppUpdateService implements AppUpdateService {
     final suppression = _decodeSuppression(updateSuppression);
     final now = _clock().toUtc();
 
-    final source = _sourceFor(_repositorySlug);
+    final repository = _configuredRepository();
+    final source = _sourceFor(repository);
     final result = await ReleaseUpdateChecker(source: source, policy: _policy)
         .check(
           currentVersion: installed,
@@ -73,6 +74,7 @@ final class RepositoryAppUpdateService implements AppUpdateService {
           now: now,
         );
     final decision = result.decision;
+    _requireConfiguredRepositoryRelease(decision.latestRelease, repository);
     return AppUpdateResult(
       release: decision.shouldPrompt ? decision.latestRelease : null,
       message: manual ? _manualMessage(decision) : null,
@@ -111,12 +113,13 @@ final class RepositoryAppUpdateService implements AppUpdateService {
 
   @override
   Future<void> openRelease(ReleaseInfo release) async {
-    final destination = _destinationUri ?? release.pageUri;
-    if (!_isSafeDestination(destination)) {
-      throw StateError(
-        'The update destination must be an absolute HTTPS URL without '
-        'embedded credentials.',
-      );
+    final configuredDestination = _destinationUri;
+    final Uri destination;
+    if (configuredDestination != null) {
+      destination = configuredDestination;
+    } else {
+      _requireConfiguredRepositoryRelease(release, _configuredRepository());
+      destination = release.pageUri;
     }
     final opened = await _launcher(destination);
     if (!opened) {
@@ -128,20 +131,49 @@ final class RepositoryAppUpdateService implements AppUpdateService {
     return launchUrl(destination, mode: LaunchMode.externalApplication);
   }
 
-  GitHubReleaseSource _sourceFor(String slug) {
-    final parts = slug.split('/');
+  _ConfiguredGitHubRepository _configuredRepository() {
+    final parts = _repositorySlug.split('/');
     if (parts.length != 2 ||
         parts.any((part) => part.trim().isEmpty || part.trim() != part)) {
       throw StateError(
         'UPDATE_REPOSITORY must use the exact owner/repository form.',
       );
     }
+    return _ConfiguredGitHubRepository(owner: parts[0], repository: parts[1]);
+  }
+
+  GitHubReleaseSource _sourceFor(_ConfiguredGitHubRepository repository) {
     return GitHubReleaseSource(
       client: _client,
-      owner: parts[0],
-      repository: parts[1],
+      owner: repository.owner,
+      repository: repository.repository,
       userAgent: 'DevCoordinator-Universal',
     );
+  }
+
+  static void _requireConfiguredRepositoryRelease(
+    ReleaseInfo release,
+    _ConfiguredGitHubRepository repository,
+  ) {
+    final uri = release.pageUri;
+    final segments = uri.pathSegments;
+    final exactReleasePage =
+        _isSafeDestination(uri) &&
+        uri.host.toLowerCase() == 'github.com' &&
+        uri.port == 443 &&
+        !uri.hasQuery &&
+        !uri.hasFragment &&
+        segments.length == 5 &&
+        segments[0] == repository.owner &&
+        segments[1] == repository.repository &&
+        segments[2] == 'releases' &&
+        segments[3] == 'tag' &&
+        segments[4] == release.tagName;
+    if (!exactReleasePage) {
+      throw StateError(
+        'The release page does not belong to the configured GitHub repository.',
+      );
+    }
   }
 
   static Version _parseInstalledVersion(String value) {
@@ -206,4 +238,14 @@ final class RepositoryAppUpdateService implements AppUpdateService {
         uri.host.isNotEmpty &&
         uri.userInfo.isEmpty;
   }
+}
+
+final class _ConfiguredGitHubRepository {
+  const _ConfiguredGitHubRepository({
+    required this.owner,
+    required this.repository,
+  });
+
+  final String owner;
+  final String repository;
 }

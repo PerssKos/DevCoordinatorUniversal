@@ -7,7 +7,7 @@ apps/devcoordinator/              composition root and platform runners
 packages/coordinator_client/      typed domain models and transport adapters
 packages/devcoordinator_design/   semantic tokens and switchable style packs
 packages/release_update/          provider-neutral release/update decisions
-contracts/                        future native gateway contract
+contracts/                        native gateway contract and deferred profiles
 docs/                             product, architecture, release operations
 ```
 
@@ -93,9 +93,9 @@ A transient first purge failure is retried before treating cleanup as
 unresolved, and a successful retry retains the non-secret saved host profile.
 The profile is removed only when that cold-launch cleanup remains unresolved.
 
-Native-v2 refresh credentials, once implemented, are a different credential
-class: they require their own rotating/revocable secure-store adapter and
-cannot reuse the legacy host-token path.
+Native-v2 refresh credentials are a separate credential class. They rotate in
+their own revocable device-session family, use the platform secure-store
+adapter, and never reuse the legacy host-token path.
 
 Route upstream credentials and Telegram bot tokens are write-only request
 fields. The gateway returns only redacted presence/scheme state. Access-request
@@ -130,19 +130,20 @@ has an empty deleted-data set. Bulk stop is bounded to explicit checked ids.
 
 ## Current implementation boundary
 
-The required core now has a strict, independently tested HTTPS client boundary
-for meta, session, inventory, events, logs, resource actions, port leases,
-lifecycle plans, RFC 9457 failures, and durable operations. It enforces strong
-ETags, UUID idempotency, bounded payloads, credential redaction, and
-fail-closed partial inventory.
+The deployed required core has a strict, independently tested HTTPS boundary
+for meta, session, inventory, events, logs, exact resource actions, port
+leases, RFC 9457 failures, and durable operations. It enforces strong ETags,
+UUID idempotency, bounded payloads, credential redaction, fail-closed partial
+inventory, system-browser OAuth/PKCE, and rotating secure refresh credentials.
+The application adapter composes that core against the fixed production
+gateway on Android and remote desktops.
 
-The gateway provider, installed-client OAuth/PKCE flow, secure refresh-token
-integration, application adapter, and every optional profile in the table are
-still active work. The schemas and client primitives prevent incompatible
-ad-hoc endpoints, client-side authority, or false UI promises; they do not
-claim that a gateway is deployed. Until the corresponding ledger item is
-closed with provider and consumer evidence, the app must show a capability
-blocker and no remote action control.
+Lifecycle planning and every optional profile in the table remain
+capability-gated active work. Their schemas and client primitives prevent
+incompatible ad-hoc endpoints, client-side authority, or false UI promises,
+but do not claim that the provider advertises them. Until the corresponding
+ledger item is closed with provider and consumer evidence, the app must show a
+capability blocker and no action control for that family.
 
 ## Data flow
 

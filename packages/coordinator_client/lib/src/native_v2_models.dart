@@ -119,18 +119,41 @@ final class NativeGatewayCapabilities {
       values.contains(capability);
 }
 
+enum NativeGatewayPkceMethod {
+  s256('S256');
+
+  const NativeGatewayPkceMethod(this.wireValue);
+
+  final String wireValue;
+}
+
 final class NativeGatewayMeta {
   NativeGatewayMeta({
     required this.contractVersion,
     required this.serverVersion,
     required this.minimumClientVersion,
+    required this.issuer,
+    required this.authorizationEndpoint,
+    required this.tokenEndpoint,
+    required this.revocationEndpoint,
+    required this.publicClientId,
+    required Iterable<NativeGatewayPkceMethod> pkceMethods,
     required this.capabilities,
-  });
+  }) : pkceMethods = Set.unmodifiable(pkceMethods);
 
   final String contractVersion;
   final String serverVersion;
   final String minimumClientVersion;
+  final Uri issuer;
+  final Uri authorizationEndpoint;
+  final Uri tokenEndpoint;
+  final Uri revocationEndpoint;
+  final String publicClientId;
+  final Set<NativeGatewayPkceMethod> pkceMethods;
   final NativeGatewayCapabilities capabilities;
+
+  bool get supportsPkceS256 =>
+      pkceMethods.contains(NativeGatewayPkceMethod.s256);
 }
 
 enum NativeGatewaySessionRole {
@@ -257,15 +280,25 @@ final class NativeGatewayPortLease {
     required this.projectId,
     required this.port,
     required this.purpose,
-    required this.expiresAt,
+    required this.status,
+    required this.releasable,
+    this.serverResourceId,
+    this.expiresAt,
+    this.createdAt,
   });
 
   final String id;
   final String projectId;
+  final String? serverResourceId;
   final int port;
   final String purpose;
-  final DateTime expiresAt;
+  final NativeGatewayPortLeaseStatus status;
+  final bool releasable;
+  final DateTime? expiresAt;
+  final DateTime? createdAt;
 }
+
+enum NativeGatewayPortLeaseStatus { active, released, stale }
 
 final class NativeGatewayInventory {
   NativeGatewayInventory({
@@ -346,6 +379,9 @@ final class NativeGatewayActionRequest {
 final class NativeGatewayLeaseRequest {
   NativeGatewayLeaseRequest({
     required String projectId,
+    required String serverResourceId,
+    required int firstPort,
+    required int lastPort,
     required String purpose,
     int? preferredPort,
     int? ttlSeconds,
@@ -354,19 +390,41 @@ final class NativeGatewayLeaseRequest {
          'projectId',
          maxLength: 256,
        ),
+       serverResourceId = _requiredBoundedString(
+         serverResourceId,
+         'serverResourceId',
+         maxLength: 256,
+       ),
+       firstPort = _boundedInt(
+         firstPort,
+         'firstPort',
+         minimum: 1,
+         maximum: 65535,
+       ),
+       lastPort = _boundedInt(lastPort, 'lastPort', minimum: 1, maximum: 65535),
        purpose = _requiredBoundedString(purpose, 'purpose', maxLength: 120),
-       preferredPort = _optionalPort(preferredPort, 'preferredPort'),
+       preferredPort = _validatedPreferredPort(
+         preferredPort,
+         firstPort,
+         lastPort,
+       ),
        ttlSeconds = ttlSeconds == null
            ? null
            : _boundedInt(ttlSeconds, 'ttlSeconds', minimum: 60, maximum: 86400);
 
   final String projectId;
+  final String serverResourceId;
+  final int firstPort;
+  final int lastPort;
   final String purpose;
   final int? preferredPort;
   final int? ttlSeconds;
 
   Map<String, Object?> toJson() => {
     'projectId': projectId,
+    'serverResourceId': serverResourceId,
+    'firstPort': firstPort,
+    'lastPort': lastPort,
     'purpose': purpose,
     if (preferredPort != null) 'preferredPort': preferredPort,
     if (ttlSeconds != null) 'ttlSeconds': ttlSeconds,
@@ -639,3 +697,22 @@ int _boundedInt(
 
 int? _optionalPort(int? value, String name) =>
     value == null ? null : _boundedInt(value, name, minimum: 1, maximum: 65535);
+
+int? _validatedPreferredPort(int? value, int firstPort, int lastPort) {
+  if (lastPort < firstPort) {
+    throw ArgumentError.value(
+      lastPort,
+      'lastPort',
+      'must be greater than or equal to firstPort',
+    );
+  }
+  final preferred = _optionalPort(value, 'preferredPort');
+  if (preferred != null && (preferred < firstPort || preferred > lastPort)) {
+    throw ArgumentError.value(
+      preferred,
+      'preferredPort',
+      'must be within firstPort and lastPort',
+    );
+  }
+  return preferred;
+}

@@ -3,7 +3,9 @@ import 'package:devcoordinator_design/devcoordinator_design.dart';
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../core/auth/native_oauth.dart';
 import '../core/coordinator/legacy_action_policy.dart';
+import '../core/coordinator/native_coordinator_service.dart';
 import '../core/storage/secure_token_store.dart';
 import '../core/storage/settings_store.dart';
 import 'app_services.dart';
@@ -47,6 +49,26 @@ final class AppController extends ChangeNotifier {
   bool supports(CoordinatorCapability capability) =>
       _coordinator?.supports(capability) ?? false;
 
+  void _handleConnectionProgress(CoordinatorConnectionProgress progress) {
+    final phase = switch (progress) {
+      CoordinatorConnectionProgress.validatingEndpoint =>
+        ConnectionPhase.validatingEndpoint,
+      CoordinatorConnectionProgress.refreshingSession =>
+        ConnectionPhase.refreshingSession,
+      CoordinatorConnectionProgress.launchingBrowser =>
+        ConnectionPhase.launchingBrowser,
+      CoordinatorConnectionProgress.awaitingCallback =>
+        ConnectionPhase.awaitingCallback,
+      CoordinatorConnectionProgress.exchangingCode =>
+        ConnectionPhase.exchangingCode,
+    };
+    if (_state.connectionPhase == phase) {
+      return;
+    }
+    _state = _state.copyWith(connectionPhase: phase);
+    notifyListeners();
+  }
+
   Future<void> initialize() async {
     try {
       var settings = await _settingsStore.read();
@@ -60,7 +82,26 @@ final class AppController extends ChangeNotifier {
       } catch (error) {
         coldLaunchErrors.add('credential: ${_safeMessage(error)}');
       }
-      if (settings.credentialCleanupPending) {
+      if (settings.credentialCleanupPending &&
+          settings.connection?.kind == StoredConnectionKind.nativeGatewayV2) {
+        final revocation = await _retryPendingNativeRevocation(settings);
+        settings = revocation.settings;
+        if (revocation.errors.isNotEmpty) {
+          cleanupError = _nativeRevocationMessage(<String>[
+            ...revocation.errors,
+            ...coldLaunchErrors,
+          ]);
+        } else if (coldLaunchErrors.isNotEmpty) {
+          final cleanup = await _retryColdLaunchLegacyPurge(
+            settings,
+            priorErrors: coldLaunchErrors,
+          );
+          settings = cleanup.settings;
+          if (cleanup.errors.isNotEmpty) {
+            cleanupError = _credentialCleanupMessage(cleanup.errors);
+          }
+        }
+      } else if (settings.credentialCleanupPending) {
         final cleanup = await _beginCredentialCleanup(
           settings.copyWith(
             clearConnection: true,
@@ -84,7 +125,7 @@ final class AppController extends ChangeNotifier {
       }
       if (cleanupError == null &&
           !settings.credentialCleanupPending &&
-          settings.connection != null) {
+          settings.connection?.kind == StoredConnectionKind.localLegacyV1) {
         try {
           // This returns only a process-session credential. It can never
           // recover a bearer from a previous app process.
@@ -111,16 +152,32 @@ final class AppController extends ChangeNotifier {
             ? ConnectionAvailability.disconnected
             : ConnectionAvailability.unavailable,
         busy: false,
+        connectionPhase:
+            settings.credentialCleanupPending &&
+                settings.connection?.kind ==
+                    StoredConnectionKind.nativeGatewayV2
+            ? ConnectionPhase.revoked
+            : settings.connection == null
+            ? ConnectionPhase.disconnected
+            : settings.connection!.kind == StoredConnectionKind.nativeGatewayV2
+            ? ConnectionPhase.refreshingSession
+            : ConnectionPhase.authenticationRequired,
         connectionError: cleanupError,
         clearConnectionError: cleanupError == null,
       );
       notifyListeners();
 
       if (cleanupError == null &&
-          settings.connection != null &&
-          sessionCredential != null &&
-          sessionCredential.isNotEmpty) {
-        await _connectSaved(settings.connection!, sessionCredential);
+          !settings.credentialCleanupPending &&
+          settings.connection != null) {
+        if (settings.connection!.kind == StoredConnectionKind.nativeGatewayV2) {
+          await _connectSaved(settings.connection!);
+        } else if (sessionCredential != null && sessionCredential.isNotEmpty) {
+          await _connectSaved(
+            settings.connection!,
+            credential: sessionCredential,
+          );
+        }
       }
 
       if (settings.updateChecksEnabled) {
@@ -131,6 +188,7 @@ final class AppController extends ChangeNotifier {
         busy: false,
         connectionError: _safeMessage(error),
         availability: ConnectionAvailability.unavailable,
+        connectionPhase: _phaseAfterError(error),
       );
       notifyListeners();
     }
@@ -179,7 +237,7 @@ final class AppController extends ChangeNotifier {
 
   Future<void> connect({
     required StoredConnectionProfile profile,
-    required String credential,
+    String credential = '',
   }) async {
     if (_state.settings.credentialCleanupPending) {
       _state = _state.copyWith(
@@ -190,12 +248,18 @@ final class AppController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (profile.kind == StoredConnectionKind.nativeGatewayV2) {
+      await _connectNative(profile, interactive: true);
+      return;
+    }
     final previousState = _state;
     _state = _state.copyWith(
       busy: true,
       availability: ConnectionAvailability.unavailable,
       clearConnectionError: true,
       clearInventory: true,
+      clearNativeInventory: true,
+      connectionPhase: ConnectionPhase.validatingEndpoint,
     );
     notifyListeners();
     AppCoordinatorService? candidate;
@@ -209,6 +273,8 @@ final class AppController extends ChangeNotifier {
       candidate = await _coordinatorFactory.connect(
         profile: profile,
         credential: credential,
+        interactive: true,
+        onProgress: _handleConnectionProgress,
       );
       final inventory = await candidate.loadInventory();
       tokenWriteStarted = true;
@@ -224,6 +290,7 @@ final class AppController extends ChangeNotifier {
         inventory: inventory,
         availability: ConnectionAvailability.available,
         busy: false,
+        connectionPhase: ConnectionPhase.connected,
         clearConnectionError: true,
       );
     } catch (error) {
@@ -274,6 +341,8 @@ final class AppController extends ChangeNotifier {
           availability: ConnectionAvailability.disconnected,
           busy: false,
           clearInventory: true,
+          clearNativeInventory: true,
+          connectionPhase: ConnectionPhase.disconnected,
           connectionError:
               '${_safeMessage(error)}$rollbackMessage $recoveryMessage',
         );
@@ -284,27 +353,149 @@ final class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _connectNative(
+    StoredConnectionProfile profile, {
+    required bool interactive,
+  }) async {
+    if (_coordinator != null && _state.isConnected) {
+      _state = _state.copyWith(
+        connectionError:
+            'Disconnect the current session before selecting another gateway.',
+      );
+      notifyListeners();
+      return;
+    }
+    final previousState = _state;
+    _state = _state.copyWith(
+      busy: true,
+      availability: ConnectionAvailability.unavailable,
+      connectionPhase: interactive
+          ? ConnectionPhase.launchingBrowser
+          : ConnectionPhase.refreshingSession,
+      clearConnectionError: true,
+      clearInventory: true,
+      clearNativeInventory: true,
+      clearNativeEvents: true,
+      clearNativeEventsCursor: true,
+      clearNativeEventsError: true,
+    );
+    notifyListeners();
+    AppCoordinatorService? candidate;
+    var settingsWritten = false;
+    try {
+      candidate = await _coordinatorFactory.connect(
+        profile: profile,
+        interactive: interactive,
+        onProgress: _handleConnectionProgress,
+      );
+      if (candidate is! NativeAppCoordinatorService) {
+        throw StateError(
+          'The native gateway factory returned an incompatible service.',
+        );
+      }
+      _state = _state.copyWith(
+        connectionPhase: ConnectionPhase.loadingInventory,
+      );
+      notifyListeners();
+      final inventory = await candidate.loadNativeInventory();
+      final settings = previousState.settings.copyWith(connection: profile);
+      await _settingsStore.write(settings);
+      settingsWritten = true;
+      await _tokenStore.clear();
+      _coordinator?.close();
+      _coordinator = candidate;
+      candidate = null;
+      _state = previousState.copyWith(
+        settings: settings,
+        clearInventory: true,
+        nativeInventory: inventory,
+        nativeMeta: (_coordinator! as NativeAppCoordinatorService).nativeMeta,
+        nativeSession:
+            (_coordinator! as NativeAppCoordinatorService).nativeSession,
+        clearNativeEvents: true,
+        clearNativeEventsCursor: true,
+        nativeEventsHasMore: true,
+        clearNativeEventsError: true,
+        availability: ConnectionAvailability.available,
+        connectionPhase: ConnectionPhase.connected,
+        busy: false,
+        clearConnectionError: true,
+      );
+    } catch (error) {
+      if (settingsWritten) {
+        try {
+          await _settingsStore.write(previousState.settings);
+        } catch (_) {
+          // The error remains visible and no native service is committed.
+        }
+      }
+      if (candidate case final NativeAppCoordinatorService native) {
+        try {
+          await native.revokeNativeSession();
+        } catch (_) {
+          // The secure session manager retains a revocation fence.
+        }
+      }
+      _state = previousState.copyWith(
+        busy: false,
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+        connectionError: _safeMessage(error),
+      );
+    } finally {
+      candidate?.close();
+    }
+    notifyListeners();
+  }
+
   Future<void> _connectSaved(
-    StoredConnectionProfile profile,
-    String credential,
-  ) async {
+    StoredConnectionProfile profile, {
+    String? credential,
+  }) async {
     AppCoordinatorService? candidate;
     try {
       candidate = await _coordinatorFactory.connect(
         profile: profile,
         credential: credential,
+        interactive: false,
+        onProgress: _handleConnectionProgress,
       );
-      final inventory = await candidate.loadInventory();
+      final CoordinatorInventory? inventory;
+      final NativeGatewayInventory? nativeInventory;
+      final NativeAppCoordinatorService? nativeService =
+          candidate is NativeAppCoordinatorService ? candidate : null;
+      if (nativeService != null) {
+        nativeInventory = await nativeService.loadNativeInventory();
+        inventory = null;
+      } else {
+        inventory = await candidate.loadInventory();
+        nativeInventory = null;
+      }
       _coordinator?.close();
       _coordinator = candidate;
       candidate = null;
       _state = _state.copyWith(
         inventory: inventory,
+        clearInventory: inventory == null,
+        nativeInventory: nativeInventory,
+        clearNativeInventory: nativeInventory == null,
+        nativeMeta: nativeService?.nativeMeta,
+        clearNativeMeta: nativeService == null,
+        nativeSession: nativeService?.nativeSession,
+        clearNativeSession: nativeService == null,
         availability: ConnectionAvailability.available,
+        connectionPhase: ConnectionPhase.connected,
+        busy: false,
         clearConnectionError: true,
       );
     } catch (error) {
-      _setConnectionError(_safeMessage(error));
+      _state = _state.copyWith(
+        busy: false,
+        connectionError: _safeMessage(error),
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+      notifyListeners();
       return;
     } finally {
       candidate?.close();
@@ -313,6 +504,123 @@ final class AppController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    final active = _coordinator;
+    if (active is NativeAppCoordinatorService ||
+        _state.settings.connection?.kind ==
+            StoredConnectionKind.nativeGatewayV2) {
+      final profile = _state.settings.connection;
+      if (profile == null) {
+        _state = _state.copyWith(
+          busy: false,
+          availability: ConnectionAvailability.unavailable,
+          connectionPhase: ConnectionPhase.revoked,
+          connectionError:
+              'The saved native profile is unavailable, so its session '
+              'cannot be revoked safely.',
+        );
+        notifyListeners();
+        return;
+      }
+      _state = _state.copyWith(
+        busy: true,
+        connectionPhase: ConnectionPhase.refreshingSession,
+        clearConnectionError: true,
+        clearActionKey: true,
+      );
+      notifyListeners();
+      var pendingSettings = _state.settings;
+      if (!pendingSettings.credentialCleanupPending) {
+        try {
+          // This independent marker is the commit point for disconnect intent.
+          // No remote or secure-credential mutation may precede it.
+          await _settingsStore.setCredentialCleanupPending(true);
+          pendingSettings = pendingSettings.copyWith(
+            credentialCleanupPending: true,
+          );
+          _state = _state.copyWith(settings: pendingSettings);
+        } catch (error) {
+          _state = _state.copyWith(
+            busy: false,
+            availability: active is NativeAppCoordinatorService
+                ? ConnectionAvailability.available
+                : ConnectionAvailability.unavailable,
+            connectionPhase: active is NativeAppCoordinatorService
+                ? ConnectionPhase.connected
+                : ConnectionPhase.revoked,
+            connectionError:
+                'The disconnect request could not be stored safely: '
+                '${_safeMessage(error)}',
+          );
+          notifyListeners();
+          return;
+        }
+      }
+      try {
+        if (active is NativeAppCoordinatorService) {
+          await active.revokeNativeSession();
+        } else if (_coordinatorFactory is NativeStoredSessionRevoker) {
+          await (_coordinatorFactory as NativeStoredSessionRevoker)
+              .revokeStoredNativeSession(profile);
+        } else {
+          throw StateError(
+            'The saved native session cannot be revoked by this build.',
+          );
+        }
+      } catch (error) {
+        // Retain both the profile and durable marker. A cold launch retries
+        // stored revocation and must never route this credential to restore.
+        _state = _state.copyWith(
+          settings: pendingSettings,
+          busy: false,
+          availability: ConnectionAvailability.unavailable,
+          connectionPhase: ConnectionPhase.revoked,
+          connectionError: _safeMessage(error),
+        );
+        notifyListeners();
+        return;
+      }
+      active?.close();
+      _coordinator = null;
+      final cleanup = await _finalizeNativeRevocation(pendingSettings);
+      if (cleanup.errors.isNotEmpty) {
+        _state = _state.copyWith(
+          settings: cleanup.settings,
+          busy: false,
+          availability: ConnectionAvailability.unavailable,
+          connectionPhase: ConnectionPhase.revoked,
+          clearInventory: true,
+          clearNativeInventory: true,
+          clearNativeMeta: true,
+          clearNativeSession: true,
+          clearNativeEvents: true,
+          clearNativeEventsCursor: true,
+          clearNativeEventsError: true,
+          clearLastNativeOperation: true,
+          connectionError: _nativeRevocationMessage(cleanup.errors),
+        );
+        notifyListeners();
+        return;
+      }
+      final settings = cleanup.settings;
+      _state = _state.copyWith(
+        settings: settings,
+        availability: ConnectionAvailability.disconnected,
+        connectionPhase: ConnectionPhase.disconnected,
+        busy: false,
+        clearInventory: true,
+        clearNativeInventory: true,
+        clearNativeMeta: true,
+        clearNativeSession: true,
+        clearNativeEvents: true,
+        clearNativeEventsCursor: true,
+        clearNativeEventsError: true,
+        clearLastNativeOperation: true,
+        clearConnectionError: true,
+        section: AppSection.overview,
+      );
+      notifyListeners();
+      return;
+    }
     final settings = _state.settings.copyWith(
       clearConnection: true,
       credentialCleanupPending: true,
@@ -323,8 +631,15 @@ final class AppController extends ChangeNotifier {
       settings: settings,
       availability: ConnectionAvailability.disconnected,
       clearInventory: true,
+      clearNativeInventory: true,
+      clearNativeMeta: true,
+      clearNativeSession: true,
+      clearNativeEvents: true,
+      clearNativeEventsCursor: true,
+      clearLastNativeOperation: true,
       clearConnectionError: true,
       clearActionKey: true,
+      connectionPhase: ConnectionPhase.disconnected,
       section: AppSection.overview,
     );
     notifyListeners();
@@ -368,18 +683,430 @@ final class AppController extends ChangeNotifier {
     _state = _state.copyWith(refreshing: true, clearConnectionError: true);
     notifyListeners();
     try {
-      final inventory = await coordinator.loadInventory();
-      _state = _state.copyWith(
-        inventory: inventory,
-        availability: ConnectionAvailability.available,
-        refreshing: false,
-        clearConnectionError: true,
-      );
+      if (coordinator case final NativeAppCoordinatorService native) {
+        final inventory = await native.loadNativeInventory();
+        _state = _state.copyWith(
+          nativeInventory: inventory,
+          nativeSession: native.nativeSession,
+          availability: ConnectionAvailability.available,
+          connectionPhase: ConnectionPhase.connected,
+          refreshing: false,
+          clearConnectionError: true,
+        );
+      } else {
+        final inventory = await coordinator.loadInventory();
+        _state = _state.copyWith(
+          inventory: inventory,
+          availability: ConnectionAvailability.available,
+          connectionPhase: ConnectionPhase.connected,
+          refreshing: false,
+          clearConnectionError: true,
+        );
+      }
     } catch (error) {
       _state = _state.copyWith(
         refreshing: false,
         connectionError: _safeMessage(error),
         availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+    }
+    notifyListeners();
+  }
+
+  NativeActionGate canActOnNativeProject(
+    NativeGatewayProject project,
+    NativeGatewayResourceAction action,
+  ) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService || !_state.canMutate) {
+      return const NativeActionGate.blocked(
+        'The native gateway is not ready for mutations.',
+      );
+    }
+    return coordinator.canActOnNativeProject(project, action);
+  }
+
+  NativeActionGate canActOnNativeResource(
+    NativeGatewayResource resource,
+    NativeGatewayResourceAction action,
+  ) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService || !_state.canMutate) {
+      return const NativeActionGate.blocked(
+        'The native gateway is not ready for mutations.',
+      );
+    }
+    return coordinator.canActOnNativeResource(resource, action);
+  }
+
+  NativeActionGate canReadNativeLogs(NativeGatewayResource resource) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService ||
+        !_state.canReadRemoteData) {
+      return const NativeActionGate.blocked(
+        'The native gateway is not ready for logs.',
+      );
+    }
+    return coordinator.canReadNativeLogs(resource);
+  }
+
+  NativeActionGate canManageNativeLease({
+    required String projectId,
+    String? leaseId,
+  }) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService || !_state.canMutate) {
+      return const NativeActionGate.blocked(
+        'The native gateway is not ready for port changes.',
+      );
+    }
+    return coordinator.canManageNativeLease(
+      projectId: projectId,
+      leaseId: leaseId,
+    );
+  }
+
+  Future<NativeGatewayOperation?> runNativeProjectAction(
+    NativeGatewayProject project,
+    NativeGatewayResourceAction action,
+  ) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService) {
+      return Future<NativeGatewayOperation?>.value();
+    }
+    final gate = canActOnNativeProject(project, action);
+    return _runNativeAction(
+      key: 'native-project:${project.id}:${action.name}',
+      gate: gate,
+      action: () => coordinator.actOnNativeProject(project, action),
+    );
+  }
+
+  Future<NativeGatewayOperation?> runNativeResourceAction(
+    NativeGatewayResource resource,
+    NativeGatewayResourceAction action,
+  ) {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService) {
+      return Future<NativeGatewayOperation?>.value();
+    }
+    final gate = canActOnNativeResource(resource, action);
+    return _runNativeAction(
+      key: 'native-resource:${resource.id}:${action.name}',
+      gate: gate,
+      action: () => coordinator.actOnNativeResource(resource, action),
+    );
+  }
+
+  Future<NativeGatewayOperation?> _runNativeAction({
+    required String key,
+    required NativeActionGate gate,
+    required Future<NativeGatewayOperation> Function() action,
+  }) async {
+    if (!gate.allowed) {
+      await _reportBlockedMutation(
+        gate.reason ?? 'The gateway blocked this action.',
+      );
+      return null;
+    }
+    _state = _state.copyWith(
+      actionKey: key,
+      clearConnectionError: true,
+      clearLastNativeOperation: true,
+    );
+    notifyListeners();
+    try {
+      final operation = await action();
+      if (!operation.isSuccessful) {
+        _retainFailedNativeOperation(operation);
+        notifyListeners();
+        return null;
+      }
+      final native = _coordinator! as NativeAppCoordinatorService;
+      _state = _state.copyWith(
+        nativeInventory: native.currentNativeInventory,
+        nativeSession: native.nativeSession,
+        lastNativeOperation: operation,
+        availability: ConnectionAvailability.available,
+        connectionPhase: ConnectionPhase.connected,
+        clearActionKey: true,
+        clearConnectionError: true,
+      );
+      notifyListeners();
+      return operation;
+    } on NativeOperationFailedException catch (error) {
+      _retainFailedNativeOperation(error.operation);
+    } on CoordinatorMutationOutcomeUnknownException {
+      _state = _state.copyWith(
+        clearActionKey: true,
+        connectionError: _unknownMutationMessage,
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: ConnectionPhase.stale,
+      );
+    } catch (error) {
+      if (await _handleNativePreconditionFailure(error)) {
+        return null;
+      }
+      final native = _coordinator is NativeAppCoordinatorService
+          ? _coordinator! as NativeAppCoordinatorService
+          : null;
+      _state = _state.copyWith(
+        clearActionKey: true,
+        nativeSession: native?.nativeSession,
+        connectionError: _safeMessage(error),
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+    }
+    notifyListeners();
+    return null;
+  }
+
+  Future<NativeGatewayLogPage?> readNativeLogs(
+    NativeGatewayResource resource, {
+    String? cursor,
+  }) async {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService) {
+      return null;
+    }
+    final gate = canReadNativeLogs(resource);
+    if (!gate.allowed) {
+      await _reportBlockedMutation(
+        gate.reason ?? 'The gateway blocked these logs.',
+      );
+      return null;
+    }
+    _state = _state.copyWith(
+      actionKey: 'native-resource:${resource.id}:logs',
+      clearConnectionError: true,
+    );
+    notifyListeners();
+    try {
+      final result = await coordinator.readNativeLogs(resource, cursor: cursor);
+      _state = _state.copyWith(
+        clearActionKey: true,
+        clearConnectionError: true,
+      );
+      notifyListeners();
+      return result;
+    } catch (error) {
+      if (await _handleNativePreconditionFailure(error)) {
+        return null;
+      }
+      _state = _state.copyWith(
+        clearActionKey: true,
+        connectionError: _safeMessage(error),
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<NativeGatewayPortLease?> leaseNativePort({
+    required NativeGatewayProject project,
+    required NativeGatewayResource server,
+    required int firstPort,
+    required int lastPort,
+    required String purpose,
+    int? preferredPort,
+    Duration? ttl,
+  }) async {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService) {
+      return null;
+    }
+    final gate = canManageNativeLease(projectId: project.id);
+    if (!gate.allowed) {
+      await _reportBlockedMutation(
+        gate.reason ?? 'The gateway blocked port leasing.',
+      );
+      return null;
+    }
+    _state = _state.copyWith(
+      actionKey: 'native-port:lease',
+      clearConnectionError: true,
+    );
+    notifyListeners();
+    try {
+      final lease = await coordinator.leaseNativePort(
+        project: project,
+        server: server,
+        firstPort: firstPort,
+        lastPort: lastPort,
+        purpose: purpose,
+        preferredPort: preferredPort,
+        ttl: ttl,
+      );
+      _state = _state.copyWith(
+        nativeInventory: coordinator.currentNativeInventory,
+        nativeSession: coordinator.nativeSession,
+        clearActionKey: true,
+        clearConnectionError: true,
+      );
+      notifyListeners();
+      return lease;
+    } on NativeOperationFailedException catch (error) {
+      _retainFailedNativeOperation(error.operation);
+      notifyListeners();
+      return null;
+    } catch (error) {
+      if (await _handleNativePreconditionFailure(error)) {
+        return null;
+      }
+      _state = _state.copyWith(
+        clearActionKey: true,
+        connectionError: _safeMessage(error),
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<void> releaseNativePort(NativeGatewayPortLease lease) async {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService) {
+      return;
+    }
+    final gate = canManageNativeLease(
+      projectId: lease.projectId,
+      leaseId: lease.id,
+    );
+    if (!gate.allowed) {
+      await _reportBlockedMutation(
+        gate.reason ?? 'The gateway blocked lease release.',
+      );
+      return;
+    }
+    _state = _state.copyWith(
+      actionKey: 'native-port:${lease.id}:release',
+      clearConnectionError: true,
+    );
+    notifyListeners();
+    try {
+      await coordinator.releaseNativePort(lease);
+      _state = _state.copyWith(
+        nativeInventory: coordinator.currentNativeInventory,
+        nativeSession: coordinator.nativeSession,
+        clearActionKey: true,
+        clearConnectionError: true,
+      );
+    } on NativeOperationFailedException catch (error) {
+      _retainFailedNativeOperation(error.operation);
+    } catch (error) {
+      if (await _handleNativePreconditionFailure(error)) {
+        return;
+      }
+      _state = _state.copyWith(
+        clearActionKey: true,
+        connectionError: _safeMessage(error),
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: _phaseAfterError(error),
+      );
+    }
+    notifyListeners();
+  }
+
+  void _retainFailedNativeOperation(NativeGatewayOperation operation) {
+    final native = _coordinator is NativeAppCoordinatorService
+        ? _coordinator! as NativeAppCoordinatorService
+        : null;
+    _state = _state.copyWith(
+      nativeInventory: native?.currentNativeInventory,
+      nativeSession: native?.nativeSession,
+      lastNativeOperation: operation,
+      clearActionKey: true,
+      connectionError:
+          'The operation finished with status ${operation.status.name} and '
+          'did not conclusively succeed. Review the retained result and '
+          'refresh before another action.',
+      availability: _availabilityAfterRemoteFailure(),
+      connectionPhase: ConnectionPhase.stale,
+    );
+  }
+
+  Future<bool> _handleNativePreconditionFailure(Object error) async {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService ||
+        error is! NativeGatewayProblemException ||
+        error.httpStatus != 412) {
+      return false;
+    }
+    try {
+      final inventory = await coordinator.loadNativeInventory();
+      _state = _state.copyWith(
+        nativeInventory: inventory,
+        nativeSession: coordinator.nativeSession,
+        availability: ConnectionAvailability.available,
+        connectionPhase: ConnectionPhase.connected,
+        clearActionKey: true,
+        connectionError:
+            'The gateway state changed before the command. Review the '
+            'refreshed target and confirm again.',
+      );
+    } catch (refreshError) {
+      _state = _state.copyWith(
+        clearActionKey: true,
+        availability: _availabilityAfterRemoteFailure(),
+        connectionPhase: ConnectionPhase.stale,
+        connectionError:
+            'The gateway rejected a stale state precondition and the latest '
+            'inventory could not be loaded: ${_safeMessage(refreshError)}',
+      );
+    }
+    notifyListeners();
+    return true;
+  }
+
+  Future<void> loadNativeEvents({bool refresh = false}) async {
+    final coordinator = _coordinator;
+    if (coordinator is! NativeAppCoordinatorService ||
+        _state.nativeEventsLoading ||
+        (!refresh && !_state.nativeEventsHasMore)) {
+      return;
+    }
+    final priorEvents = refresh
+        ? const <NativeGatewayEvent>[]
+        : _state.nativeEvents;
+    final priorCursor = refresh ? null : _state.nativeEventsCursor;
+    _state = _state.copyWith(
+      nativeEventsLoading: true,
+      clearNativeEventsError: true,
+      clearNativeEvents: refresh,
+      clearNativeEventsCursor: refresh,
+      nativeEventsHasMore: true,
+    );
+    notifyListeners();
+    try {
+      final page = await coordinator.loadNativeEvents(after: priorCursor);
+      if (page.hasMore &&
+          (page.nextCursor == null || page.nextCursor == priorCursor)) {
+        throw const CoordinatorProtocolException(
+          'The event cursor did not advance.',
+        );
+      }
+      final ids = priorEvents.map((event) => event.id).toSet();
+      final merged = <NativeGatewayEvent>[
+        ...priorEvents,
+        ...page.events.where((event) => ids.add(event.id)),
+      ];
+      _state = _state.copyWith(
+        nativeEvents: merged,
+        nativeEventsCursor: page.nextCursor,
+        clearNativeEventsCursor: page.nextCursor == null,
+        nativeEventsHasMore: page.hasMore,
+        nativeEventsLoading: false,
+        clearNativeEventsError: true,
+      );
+    } catch (error) {
+      _state = _state.copyWith(
+        nativeEventsLoading: false,
+        nativeEventsError: _safeMessage(error),
       );
     }
     notifyListeners();
@@ -627,6 +1354,12 @@ final class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void dismissLastNativeOperation() {
+    if (_state.lastNativeOperation == null) return;
+    _state = _state.copyWith(clearLastNativeOperation: true);
+    notifyListeners();
+  }
+
   Future<CoordinatorLogResult?> _readLogs(
     String key,
     CoordinatorCapability capability,
@@ -862,14 +1595,6 @@ final class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _setConnectionError(String message) {
-    _state = _state.copyWith(
-      connectionError: message,
-      availability: _availabilityAfterRemoteFailure(),
-    );
-    notifyListeners();
-  }
-
   bool _isCurrentServerTarget(CoordinatorServer server) {
     final inventory = _state.inventory;
     if (inventory == null ||
@@ -903,6 +1628,70 @@ final class AppController extends ChangeNotifier {
     _state = _state.copyWith(clearActionKey: true, connectionError: message);
     notifyListeners();
     return Future<void>.value();
+  }
+
+  Future<({PersistedAppSettings settings, List<String> errors})>
+  _retryPendingNativeRevocation(PersistedAppSettings settings) async {
+    final profile = settings.connection;
+    if (profile == null ||
+        profile.kind != StoredConnectionKind.nativeGatewayV2) {
+      return (
+        settings: settings,
+        errors: const <String>[
+          'the saved native profile required for revocation is unavailable',
+        ],
+      );
+    }
+    final revoker = switch (_coordinatorFactory) {
+      final NativeStoredSessionRevoker candidate => candidate,
+      _ => null,
+    };
+    if (revoker == null) {
+      return (
+        settings: settings,
+        errors: const <String>[
+          'this build cannot retry a stored native revocation',
+        ],
+      );
+    }
+    try {
+      await revoker.revokeStoredNativeSession(profile);
+    } catch (error) {
+      return (
+        settings: settings,
+        errors: <String>['revocation: ${_safeMessage(error)}'],
+      );
+    }
+    return _finalizeNativeRevocation(settings);
+  }
+
+  Future<({PersistedAppSettings settings, List<String> errors})>
+  _finalizeNativeRevocation(PersistedAppSettings pendingSettings) async {
+    final clearedSettings = pendingSettings.copyWith(
+      clearConnection: true,
+      credentialCleanupPending: true,
+    );
+    try {
+      // Keep the independent marker set until profile removal is durable.
+      await _settingsStore.write(clearedSettings);
+    } catch (error) {
+      return (
+        settings: pendingSettings,
+        errors: <String>['profile cleanup: ${_safeMessage(error)}'],
+      );
+    }
+    try {
+      await _settingsStore.setCredentialCleanupPending(false);
+    } catch (error) {
+      return (
+        settings: clearedSettings,
+        errors: <String>['cleanup marker: ${_safeMessage(error)}'],
+      );
+    }
+    return (
+      settings: clearedSettings.copyWith(credentialCleanupPending: false),
+      errors: const <String>[],
+    );
   }
 
   Future<({PersistedAppSettings settings, List<String> errors})>
@@ -1010,6 +1799,11 @@ final class AppController extends ChangeNotifier {
         'incomplete (${errors.join('; ')}). Retry cleanup before connecting.';
   }
 
+  static String _nativeRevocationMessage(List<String> errors) {
+    return 'Remote session revocation is incomplete (${errors.join('; ')}). '
+        'Retry disconnect before connecting again.';
+  }
+
   bool _reportMissingAvailableRelease() {
     _state = _state.copyWith(
       updateMessage: 'The available release is no longer present.',
@@ -1028,9 +1822,33 @@ final class AppController extends ChangeNotifier {
   }
 
   ConnectionAvailability _availabilityAfterRemoteFailure() {
-    return _state.inventory == null
+    return _state.inventory == null && _state.nativeInventory == null
         ? ConnectionAvailability.unavailable
         : ConnectionAvailability.stale;
+  }
+
+  static ConnectionPhase _phaseAfterError(Object error) {
+    if (error case NativeOAuthException(:final authenticationRequired)) {
+      return authenticationRequired
+          ? ConnectionPhase.authenticationRequired
+          : ConnectionPhase.offline;
+    }
+    if (error is CoordinatorAuthenticationException) {
+      return ConnectionPhase.authenticationRequired;
+    }
+    if (error case NativeGatewayProblemException(:final httpStatus)) {
+      return switch (httpStatus) {
+        401 => ConnectionPhase.revoked,
+        403 => ConnectionPhase.denied,
+        426 => ConnectionPhase.incompatible,
+        _ => ConnectionPhase.offline,
+      };
+    }
+    if (error is CoordinatorEndpointException ||
+        error is CoordinatorProtocolException) {
+      return ConnectionPhase.incompatible;
+    }
+    return ConnectionPhase.offline;
   }
 
   static AppearancePreferences _appearanceFrom(PersistedAppSettings settings) {

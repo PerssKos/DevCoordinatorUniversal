@@ -1367,7 +1367,9 @@ final class _SequenceCoordinatorFactory
   @override
   Future<AppCoordinatorService> connect({
     required StoredConnectionProfile profile,
-    required String credential,
+    String? credential,
+    bool interactive = false,
+    void Function(CoordinatorConnectionProgress progress)? onProgress,
   }) async {
     return services[_index++];
   }
