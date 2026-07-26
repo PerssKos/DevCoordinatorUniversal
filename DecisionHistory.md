@@ -19,7 +19,10 @@ remote connection is one action against
 Direct Android APK distribution uses one dedicated long-lived signing
 certificate rather than an ephemeral debug key; Apple and Windows packages
 still require their platform-trusted publisher identities. See
-[DCU-2026-07-26-08](DecisionDetails/DCU-2026-07-26-08.md).
+[DCU-2026-07-26-08](DecisionDetails/DCU-2026-07-26-08.md). That private
+Android key remains on an owner-controlled signer; GitHub receives only the
+already-signed APK and independently verifies its public identity. See
+[DCU-2026-07-26-09](DecisionDetails/DCU-2026-07-26-09.md).
 
 Confirmed inherited direction: coordinator state and actions remain real,
 attributable, capability-gated, and fail closed; one canonical host authority
@@ -35,6 +38,26 @@ lifecycle management stays hidden, exact requested port ranges pass through,
 and lease release depends on the server's device-session ownership result. See
 [DCU-2026-07-26-06](DecisionDetails/DCU-2026-07-26-06.md) and
 [DCU-2026-07-26-07](DecisionDetails/DCU-2026-07-26-07.md).
+
+## DCU-2026-07-26-09 — Stable Android releases are signed off GitHub
+
+ID: DCU-2026-07-26-09 · Details:
+[supporting record](DecisionDetails/DCU-2026-07-26-09.md)
+
+Decision: Keep the long-lived direct Android private key and its passwords off
+GitHub. Build, lint, sign, and verify on an owner-controlled release host;
+stage only the signed APK and checksum as a GitHub draft; download and verify
+them again before publication. Let read-only GitHub Actions validate the public
+certificate, package, manifest, content, checksum, source tag, and update
+discovery after publication.
+
+Why: GitHub Environment secrets would automate signing but copy the durable
+update identity into a cloud-runner trust boundary; an improvised manual upload
+would keep the key local but make repeatability, failure recovery, and
+verification operator-dependent; and publishing an unsigned artifact would
+break update identity. An offline scripted signer plus transactional draft
+publication preserves the narrowest private-key boundary while retaining a
+repeatable and independently audited GitHub release lifecycle.
 
 ## DCU-2026-07-26-08 — Direct Android updates keep one signing identity
 

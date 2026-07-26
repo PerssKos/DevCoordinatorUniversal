@@ -60,13 +60,18 @@ installed, remove it once before installing the production APK. Debug APKs are
 not distributed because a second package registered for the production
 callback makes Android callback selection ambiguous.
 
-The `android-production` GitHub Environment must contain
-`ANDROID_RELEASE_KEYSTORE_BASE64`, `ANDROID_RELEASE_STORE_PASSWORD`, and
-`ANDROID_RELEASE_KEY_PASSWORD`, and should require an owner approval. Pushing
-an exact `v<SemVer>` tag whose commit is contained in `main` runs the same
-source and contract gates and invokes the canonical builder. The workflow
-uploads only the signed APK plus checksum to a draft, downloads both again,
-revalidates checksum/signature/package/merged callback/content, publishes the
-verified draft, and finally verifies that the anonymous latest-release API
-returns the new stable tag. A rerun safely reuses a draft or revalidates an
-already published release.
+Do not upload the direct-distribution key or passwords to GitHub secrets. From
+the clean, already-pushed `main` commit, create and push the exact
+`v<SemVer>` tag, export the private builder inputs shown above, and run:
+
+```bash
+tool/publish_android_release.sh
+```
+
+The local publisher invokes the canonical builder, uploads only the signed APK
+plus checksum to a draft, downloads both again, revalidates checksum/signature/
+package/merged callback/content, publishes the verified draft, and confirms
+anonymous latest-release discovery. A rerun safely reuses a draft or
+revalidates an already published release. Read-only GitHub Actions then repeats
+source, public-artifact, and update-discovery checks without access to the
+private signing identity.

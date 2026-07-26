@@ -56,6 +56,8 @@ Versioning.
   merged APK; release lint and artifact validation reject broader handlers.
 - Stable releases are staged as drafts, downloaded, and revalidated before
   publication; Android debug APKs are never distributed.
+- The direct Android signing key remains outside GitHub; a local fail-closed
+  publisher uploads only signed assets, and read-only Actions verifies them.
 - The host-wide legacy bearer is never persisted by current builds. A cold
   process cannot recover the old durable key, even when marker, profile, and
   key deletion all failed during disconnect.

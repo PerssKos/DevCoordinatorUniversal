@@ -1,35 +1,38 @@
-name: Publish signed Android release
+name: Verify published Android release
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-
-concurrency:
-  group: android-release-${{ github.ref }}
-  cancel-in-progress: false
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag to verify
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 env:
   FLUTTER_VERSION: 3.44.8
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
-  publish:
-    name: Verify, sign, and publish Android APK
+  verify:
+    name: Verify source and public signed APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    environment: android-production
-    permissions:
-      contents: write
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify stable tag and main ancestry
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Verify stable tag, release metadata, and main ancestry
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           declared_version="$(
@@ -39,16 +42,22 @@ jobs:
           version_name="${declared_version%%+*}"
           build_number="${declared_version##*+}"
           if [[ ! "$version_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
-            || ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Invalid declared release version: $declared_version" >&2
+            || ! "$build_number" =~ ^[1-9][0-9]*$ \
+            || "$RELEASE_TAG" != "v$version_name" ]]; then
+            echo "Release tag does not match the declared Android version." >&2
             exit 1
           fi
-          if [[ "$GITHUB_REF_NAME" != "v$version_name" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match v$version_name." >&2
-            exit 1
-          fi
+          release="$(
+            gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json isDraft,isPrerelease,tagName
+          )"
+          test "$(jq -r '.tagName' <<<"$release")" = "$RELEASE_TAG"
+          test "$(jq -r '.isDraft' <<<"$release")" = false
+          test "$(jq -r '.isPrerelease' <<<"$release")" = false
           git fetch --no-tags origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          git merge-base --is-ancestor HEAD origin/main
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.14.4'
@@ -69,7 +78,7 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - name: Verify source and behavior
+      - name: Verify source behavior
         run: |
           set -euo pipefail
           flutter pub get --enforce-lockfile
@@ -79,94 +88,25 @@ jobs:
           flutter test packages/devcoordinator_design
           flutter test packages/release_update
           flutter test apps/devcoordinator
-      - name: Build and sign the canonical APK
-        shell: bash
-        env:
-          RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
-          RELEASE_STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          private_directory="$(mktemp -d)"
-          trap 'rm -rf "$private_directory"' EXIT
-          umask 077
-          printf '%s' "$RELEASE_KEYSTORE_BASE64" |
-            base64 --decode >"$private_directory/release.p12"
-          printf '%s\n' "$RELEASE_STORE_PASSWORD" \
-            >"$private_directory/store.password"
-          printf '%s\n' "$RELEASE_KEY_PASSWORD" \
-            >"$private_directory/key.password"
-          export ANDROID_RELEASE_KEYSTORE="$private_directory/release.p12"
-          export ANDROID_RELEASE_STORE_PASSWORD_FILE="$private_directory/store.password"
-          export ANDROID_RELEASE_KEY_PASSWORD_FILE="$private_directory/key.password"
-          export ANDROID_RELEASE_KEY_ALIAS=devcoordinator-direct
-          export FLUTTER_BIN
-          FLUTTER_BIN="$(command -v flutter)"
-          tool/build_android_release.sh
-      - name: Create or reuse the release draft
-        id: release
+      - name: Download release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version_name="${GITHUB_REF_NAME#v}"
-          release_endpoint="repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME"
-          error_file="$(mktemp)"
-          trap 'rm -f "$error_file"' EXIT
-          if existing="$(gh api "$release_endpoint" 2>"$error_file")"; then
-            draft="$(jq -r '.draft' <<<"$existing")"
-            if [[ "$draft" != true && "$draft" != false ]]; then
-              echo "Existing release returned an invalid draft state." >&2
-              exit 1
-            fi
-            echo "mutable=$draft" >>"$GITHUB_OUTPUT"
-          elif grep -Fq '(HTTP 404)' "$error_file"; then
-            gh release create "$GITHUB_REF_NAME" \
-              --draft \
-              --generate-notes \
-              --title "DevCoordinator $version_name" \
-              --verify-tag
-            echo "mutable=true" >>"$GITHUB_OUTPUT"
-          else
-            cat "$error_file" >&2
-            exit 1
-          fi
-      - name: Upload or replace draft assets
-        if: steps.release.outputs.mutable == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          version_name="${GITHUB_REF_NAME#v}"
-          apk="apps/devcoordinator/build/release/DevCoordinator-$version_name-android.apk"
-          checksum="$apk.sha256"
-          gh release upload "$GITHUB_REF_NAME" \
-            "$apk" \
-            "$checksum" \
-            --clobber
-      - name: Download and verify release assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_MUTABLE: ${{ steps.release.outputs.mutable }}
-        run: |
-          set -euo pipefail
-          version_name="${GITHUB_REF_NAME#v}"
+          version_name="${RELEASE_TAG#v}"
           apk_name="DevCoordinator-$version_name-android.apk"
           checksum_name="$apk_name.sha256"
-          local_apk="apps/devcoordinator/build/release/$apk_name"
-          download_directory="$(mktemp -d)"
-          trap 'rm -rf "$download_directory"' EXIT
-          gh release download "$GITHUB_REF_NAME" \
-            --dir "$download_directory" \
+          install -d -m 755 "$RUNNER_TEMP/devcoordinator-release"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RUNNER_TEMP/devcoordinator-release" \
             --pattern "$apk_name" \
             --pattern "$checksum_name"
-          test -f "$download_directory/$apk_name"
-          test -f "$download_directory/$checksum_name"
+          test -f "$RUNNER_TEMP/devcoordinator-release/$apk_name"
+          test -f "$RUNNER_TEMP/devcoordinator-release/$checksum_name"
           read -r expected_hash expected_name unexpected \
-            <"$download_directory/$checksum_name"
+            <"$RUNNER_TEMP/devcoordinator-release/$checksum_name"
           if [[ ! "$expected_hash" =~ ^[0-9a-f]{64}$ \
             || "$expected_name" != "$apk_name" \
             || -n "${unexpected:-}" ]]; then
@@ -174,49 +114,21 @@ jobs:
             exit 1
           fi
           (
-            cd "$download_directory"
+            cd "$RUNNER_TEMP/devcoordinator-release"
             sha256sum --check --strict "$checksum_name"
           )
-          if [[ "$RELEASE_MUTABLE" == true ]]; then
-            cmp "$local_apk" "$download_directory/$apk_name"
-          fi
           tool/verify_android_release_artifact.sh \
-            "$download_directory/$apk_name"
-      - name: Publish the verified stable release
-        if: steps.release.outputs.mutable == 'true'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release edit "$GITHUB_REF_NAME"
-          --draft=false
-          --title "DevCoordinator ${GITHUB_REF_NAME#v}"
+            "$RUNNER_TEMP/devcoordinator-release/$apk_name"
       - name: Verify anonymous latest-release discovery
         shell: bash
-        env:
-          EXPECTED_TAG: ${{ github.ref_name }}
-          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          response=
-          for attempt in 1 2 3 4 5 6; do
-            if response="$(
-              curl --fail --silent --show-error \
-                -H 'Accept: application/vnd.github+json' \
-                -H 'X-GitHub-Api-Version: 2022-11-28' \
-                "https://api.github.com/repos/$REPOSITORY/releases/latest"
-            )"; then
-              break
-            fi
-            if [[ "$attempt" = 6 ]]; then
-              echo "Latest-release endpoint did not become available." >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          actual_tag="$(jq -r '.tag_name' <<<"$response")"
-          draft="$(jq -r '.draft' <<<"$response")"
-          prerelease="$(jq -r '.prerelease' <<<"$response")"
-          test "$actual_tag" = "$EXPECTED_TAG"
-          test "$draft" = false
-          test "$prerelease" = false
+          response="$(
+            curl --fail --silent --show-error \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest"
+          )"
+          test "$(jq -r '.tag_name' <<<"$response")" = "$RELEASE_TAG"
+          test "$(jq -r '.draft' <<<"$response")" = false
+          test "$(jq -r '.prerelease' <<<"$response")" = false
