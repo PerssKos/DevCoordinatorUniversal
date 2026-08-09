@@ -18,7 +18,7 @@ dependencies:
   coordinator_client: ^0.2.0
   cupertino_icons: ^1.0.9
   devcoordinator_design: ^0.1.0
-  flutter_secure_storage: ^10.3.1
+  flutter_secure_storage: ^11.0.0
   http: ^1.6.0
   package_info_plus: ^10.2.1
   pub_semver: ^2.2.0
