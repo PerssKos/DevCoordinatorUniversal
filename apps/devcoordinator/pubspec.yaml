@@ -21,7 +21,7 @@ dependencies:
   flutter_secure_storage: ^10.3.1
   http: ^1.6.0
   package_info_plus: ^10.2.1
-  pub_semver: ^2.2.0
+  pub_semver: ^2.2.1
   release_update: ^0.2.0
   shared_preferences: ^2.5.5
   url_launcher: ^6.3.2
